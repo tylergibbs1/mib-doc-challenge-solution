@@ -8,6 +8,9 @@ __pycache__/
 tmp/
 output/
 .env
+.cache/
+training_cache/
+reports/
 
 # Bulk challenge data is distributed as a versioned zip.
 data/train/

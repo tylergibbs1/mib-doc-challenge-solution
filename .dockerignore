@@ -10,6 +10,8 @@
 .venv/
 tmp/
 output/
+reports/
+training_cache/
 data/train/
 data/validation/
 submissions/
