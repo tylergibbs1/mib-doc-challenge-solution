@@ -387,7 +387,7 @@ class DecisionEngine:
                     )
                     for known in name_tokens
                 )
-                if score >= 0.82:
+                if score >= 0.75:
                     corrected_tokens.append(candidate)
                     changed = changed or candidate.casefold() != token.casefold()
                 else:
