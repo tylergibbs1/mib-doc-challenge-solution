@@ -166,6 +166,13 @@ class FieldResolutionTests(unittest.TestCase):
         self.assertEqual(paid.fee_status, "paid")
         self.assertEqual(waived.fee_status, "waived")
 
+    def test_recovers_anchored_paid_status_from_unknown_damaged_page(self):
+        record = extract_fields(
+            "MIB-999999",
+            [page("MIB Fea Recepit\nFee Status: paki", "unknown")],
+        )
+        self.assertEqual(record.fee_status, "paid")
+
     def test_visible_sponsor_correction_outranks_original_value(self):
         pages = [
             page(

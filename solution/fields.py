@@ -280,6 +280,8 @@ def _explicit_correction(text: str, values: tuple[str, ...]) -> str:
 
 def _fuzzy_fee(text: str) -> tuple[str, float]:
     tokens = re.findall(r"[a-z]{3,9}", text.casefold())
+    if any(token in {"naid", "paki"} for token in tokens):
+        return "paid", 0.80
     scored = sorted(
         (
             max((fuzz.ratio(token, fee) for token in tokens), default=0.0),
@@ -289,7 +291,7 @@ def _fuzzy_fee(text: str) -> tuple[str, float]:
     )
     best_score, best_fee = scored[-1]
     next_score = scored[-2][0]
-    if best_score >= 76.0 and best_score - next_score >= 4.0:
+    if best_score >= 75.0 and best_score - next_score >= 4.0:
         return best_fee, best_score / 100.0
     return "", best_score / 100.0
 
@@ -520,7 +522,8 @@ def extract_fields(
                     (8.0 * page_quality, page.page_number, fee)
                 )
                 exact_fee = True
-        if page.document_type == "fee" and not exact_fee:
+        anchored_fee_page = "FEE STATUS" in normalized(page.text)
+        if (page.document_type == "fee" or anchored_fee_page) and not exact_fee:
             fee, match_score = _fuzzy_fee(page.text)
             if fee:
                 candidates["fee_status"].append(
