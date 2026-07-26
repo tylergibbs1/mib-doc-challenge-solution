@@ -209,15 +209,17 @@ def emitted_policy_guardrail(
     if output_flags & REVIEW_FLAGS:
         return "NEEDS_REVIEW", 0.88, "emitted_review_risk"
 
-    manual, _ = explicit_manual_finding(pages)
-    if arrival_text == "1900-01-01":
+    missing_fields = set(record.missing_fields)
+    if arrival_text == "1900-01-01" or "arrival_date" in missing_fields:
         return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
-    if manual != "APPROVED":
-        core_missing = {"visa_class", "arrival_date"}
-        if visa_class != "DIP-1":
-            core_missing.add("sponsor_id")
-        if core_missing & set(record.missing_fields) or record.fee_status == "unknown":
-            return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
+    if "visa_class" in missing_fields:
+        return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
+    if visa_class != "DIP-1" and "sponsor_id" in missing_fields:
+        return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
+
+    manual, _ = explicit_manual_finding(pages)
+    if manual != "APPROVED" and record.fee_status == "unknown":
+        return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
     return None
 
 

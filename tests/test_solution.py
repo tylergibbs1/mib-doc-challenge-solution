@@ -214,6 +214,36 @@ class FieldResolutionTests(unittest.TestCase):
         guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
         self.assertEqual(guardrail[0], "NEEDS_REVIEW")
 
+    def test_date_prior_does_not_hide_missing_policy_evidence(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1",
+                "intake",
+            ),
+            page("Finding: APPROVED", "manual", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        output = record.output_fields({"arrival_date": "2026-04-14"})
+        guardrail = emitted_policy_guardrail(record, output, pages)
+        self.assertEqual(guardrail[0], "NEEDS_REVIEW")
+
+    def test_missing_non_dip_sponsor_routes_to_review(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: XW-1\nArrival Date: 2026-05-10",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+            page("Finding: APPROVED", "manual", 3),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(
+            record,
+            record.output_fields({"sponsor_id": "SPN-1042"}),
+            pages,
+        )
+        self.assertEqual(guardrail[0], "NEEDS_REVIEW")
+
     def test_extracts_clean_multi_page_packet(self):
         pages = [
             page(
