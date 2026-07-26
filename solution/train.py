@@ -24,6 +24,7 @@ from .decision import (
     DecisionEngine,
     confidence_feature_row,
     deterministic_guardrail,
+    emitted_policy_guardrail,
     evidence_policy,
     threshold_policy_label,
     visible_text,
@@ -63,6 +64,7 @@ OUTPUT_PRIOR_FIELDS = (
     "species_code",
     "home_world",
     "visa_class",
+    "arrival_date",
     "declared_purpose",
     "fee_status",
 )
@@ -223,6 +225,45 @@ def competition_scores(
         "missed_reviews": int(missed_review.sum()),
         "other_wrong": int(other_wrong.sum()),
     }
+
+
+def apply_policy_constraints(
+    probability: np.ndarray,
+    initial_prediction: np.ndarray,
+    guardrails: list[tuple[str, float, str] | None],
+    emitted_guardrails: list[tuple[str, float, str] | None],
+) -> tuple[np.ndarray, np.ndarray, list[tuple[str, float, str] | None]]:
+    """Apply training-time constraints in the same order as inference."""
+    predicted = initial_prediction.copy()
+    raw_confidence = np.array(
+        [
+            case_probability[list(CLASSES).index(label)]
+            for case_probability, label in zip(probability, predicted)
+        ]
+    )
+    applied_guardrails: list[tuple[str, float, str] | None] = [None] * len(predicted)
+    for index, guardrail in enumerate(guardrails):
+        if not guardrail:
+            continue
+        label, confidence, _ = guardrail
+        predicted[index] = label
+        support = probability[index, list(CLASSES).index(label)]
+        raw_confidence[index] = 0.75 * confidence + 0.25 * support
+        applied_guardrails[index] = guardrail
+    for index, guardrail in enumerate(emitted_guardrails):
+        if not guardrail:
+            continue
+        label, confidence, _ = guardrail
+        should_apply = (label == "DENIED" and predicted[index] != "DENIED") or (
+            label == "NEEDS_REVIEW" and predicted[index] == "APPROVED"
+        )
+        if not should_apply:
+            continue
+        predicted[index] = label
+        support = probability[index, list(CLASSES).index(label)]
+        raw_confidence[index] = 0.75 * confidence + 0.25 * support
+        applied_guardrails[index] = guardrail
+    return predicted, raw_confidence, applied_guardrails
 
 
 def field_accuracy(
@@ -555,18 +596,17 @@ def train(
         )
         for index in np.flatnonzero(replace_mask):
             output_overrides[index][field] = str(field_oof_values[field][index])
-    best: (
-        tuple[
-            float,
-            float,
-            dict[str, float],
-            np.ndarray,
-            np.ndarray,
-            np.ndarray,
-            dict[str, float],
-        ]
-        | None
-    ) = None
+    emitted_outputs = [
+        record.output_fields(fallbacks) | overrides
+        for record, fallbacks, overrides in zip(
+            corrected_records, output_fallbacks, output_overrides
+        )
+    ]
+    emitted_guardrails = [
+        emitted_policy_guardrail(record, output, case_pages)
+        for record, output, case_pages in zip(corrected_records, emitted_outputs, pages)
+    ]
+    best: tuple | None = None
     best_unconstrained = None
     for text_weight in np.linspace(0.35, 0.9, 12):
         base_probability = (
@@ -585,7 +625,7 @@ def train(
                             "deny_threshold": float(deny_threshold),
                             "policy_weight": float(policy_weight),
                         }
-                        predicted = np.array(
+                        initial_prediction = np.array(
                             [
                                 threshold_policy_label(
                                     case_probability, list(CLASSES), policy
@@ -593,24 +633,16 @@ def train(
                                 for case_probability in probability
                             ]
                         )
-                        guardrail_mask = np.zeros(len(y), dtype=bool)
-                        raw_confidence = np.array(
-                            [
-                                case_probability[list(CLASSES).index(label)]
-                                for case_probability, label in zip(
-                                    probability, predicted
-                                )
-                            ]
+                        (
+                            predicted,
+                            raw_confidence,
+                            applied_guardrails,
+                        ) = apply_policy_constraints(
+                            probability,
+                            initial_prediction,
+                            guardrails,
+                            emitted_guardrails,
                         )
-                        for index, guardrail in enumerate(guardrails):
-                            if guardrail:
-                                label, confidence, _ = guardrail
-                                predicted[index] = label
-                                guardrail_mask[index] = True
-                                support = probability[index, list(CLASSES).index(label)]
-                                raw_confidence[index] = (
-                                    0.75 * confidence + 0.25 * support
-                                )
                         baseline = competition_scores(y, predicted, raw_confidence)
                         catastrophic = baseline["catastrophic_false_approvals"]
                         candidate = (
@@ -619,7 +651,8 @@ def train(
                             policy,
                             probability,
                             predicted,
-                            guardrail_mask,
+                            raw_confidence,
+                            applied_guardrails,
                             baseline,
                         )
                         if (
@@ -633,21 +666,18 @@ def train(
                             best = candidate
     assert best is not None
     assert best_unconstrained is not None
-    _, text_weight, decision_policy, probability, predicted, guardrail_mask, _ = best
+    (
+        _,
+        text_weight,
+        decision_policy,
+        probability,
+        predicted,
+        raw_confidence,
+        applied_guardrails,
+        _,
+    ) = best
 
     disagreement = np.abs(text_prob - structured_prob).sum(axis=1) / 2.0
-    raw_confidence = np.array(
-        [
-            case_probability[list(CLASSES).index(label)]
-            for case_probability, label in zip(probability, predicted)
-        ]
-    )
-    for index, (record, case_pages) in enumerate(zip(corrected_records, pages)):
-        guardrail = deterministic_guardrail(record, case_pages)
-        if guardrail:
-            label, confidence, _ = guardrail
-            support = probability[index, list(CLASSES).index(label)]
-            raw_confidence[index] = 0.75 * confidence + 0.25 * support
     confidence_features = np.vstack(
         [
             confidence_feature_row(
@@ -657,7 +687,7 @@ def train(
                 float(disagreement[index]),
                 record,
                 pages[index],
-                guardrails[index],
+                applied_guardrails[index],
                 list(CLASSES),
             )
             for index, record in enumerate(corrected_records)
@@ -709,7 +739,7 @@ def train(
             "model_strategy": "word_char_structured_blend",
             "text_weight": best_unconstrained[1],
             "decision_policy": best_unconstrained[2],
-            "scores_before_calibration": best_unconstrained[6],
+            "scores_before_calibration": best_unconstrained[7],
         },
     }
     print(json.dumps(report, indent=2), flush=True)

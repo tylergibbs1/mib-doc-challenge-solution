@@ -154,6 +154,18 @@ def _extract_sponsors(text: str) -> list[str]:
     ]
 
 
+def _explicit_sponsor_correction(text: str) -> str:
+    """Return a visible sponsor correction without trusting unrelated IDs."""
+    for line in text.splitlines():
+        line_norm = normalized(line)
+        if "CORRECTION" not in line_norm or "SPONSOR" not in line_norm:
+            continue
+        sponsors = _extract_sponsors(line)
+        if sponsors:
+            return sponsors[-1]
+    return ""
+
+
 def _extract_dates(text: str) -> list[str]:
     values: list[str] = []
     for match in DATE_RE.finditer(text):
@@ -268,10 +280,31 @@ def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list
             found.add("identity_conflict")
         if w1 >= 0.84 and w2 >= 0.84 and intake_world != registry_world:
             found.add("identity_conflict")
-    if sponsor_pages and field_values.get("sponsor_id"):
+    manual_approval = any(
+        page.document_type == "manual"
+        and re.search(r"\bFINDING\s*[:.]?\s*APPROVED\b", normalized(page.text))
+        for page in pages
+    )
+    explicit_sponsor_mismatch = any(
+        phrase in norm for phrase in ("SPONSOR MISMATCH", "SPONSOR DOES NOT MATCH")
+    )
+    if (
+        sponsor_pages
+        and field_values.get("sponsor_id")
+        and not (manual_approval and not explicit_sponsor_mismatch)
+    ):
         sponsor_ids = _extract_sponsors("\n".join(page.text for page in sponsor_pages))
         if sponsor_ids and field_values["sponsor_id"] not in sponsor_ids:
             found.add("sponsor_mismatch")
+
+    # "EMBARGO REVIEW" is an ambiguous registry status, not the same phrase as
+    # an active planetary embargo. A trusted final approval can supersede that
+    # inferred marker, but never an explicit disqualifying statement.
+    explicit_embargo = any(
+        phrase in norm for phrase in ("PLANETARY EMBARGO", "WORLD EMBARGO")
+    )
+    if manual_approval and not explicit_embargo:
+        found.discard("planetary_embargo")
     return sorted(found)
 
 
@@ -347,6 +380,9 @@ def extract_fields(
                     (priority * page_quality * match_score, page.page_number, value)
                 )
 
+        sponsor_correction = _explicit_sponsor_correction(page.text)
+        if sponsor_correction:
+            candidates["sponsor_id"].append((9.5, page.page_number, sponsor_correction))
         for sponsor_id in _extract_sponsors(page.text):
             candidates["sponsor_id"].append(
                 (priority * page_quality, page.page_number, sponsor_id)

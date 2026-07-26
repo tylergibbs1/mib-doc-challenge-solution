@@ -19,8 +19,10 @@ No LLM, VLM, cloud OCR, API key, or runtime network access is used.
 3. **Evidence resolution.** Closed-vocabulary fields use fuzzy OCR matching;
    names, dates, and sponsor IDs use context-specific parsers. Candidate values
    follow the manual's document precedence, including explicit correction
-   notes. Cross-document conflicts become risk evidence. Outcome-determinative
-   risk flags are never imputed when their visible evidence is absent.
+   notes. Cross-document conflicts become risk evidence unless a trusted final
+   finding explicitly supersedes an inferred, non-explicit conflict.
+   Outcome-determinative risk flags are never imputed when their visible
+   evidence is absent.
 4. **Hybrid prediction.** Word and character TF-IDF features handle policy
    phrases, damaged words, and layout variants, while an Extra Trees model
    handles the extracted structured record. A held-out blend is wrapped in
@@ -31,11 +33,13 @@ No LLM, VLM, cloud OCR, API key, or runtime network access is used.
    the chosen adjudication is correct using out-of-fold class probabilities,
    model margin and disagreement, OCR quality, missing fields, document mix,
    predicted class, and guardrail source.
-6. **Policy/output separation.** Risk flags and missing policy evidence are
-   never imputed for adjudication. After the decision and confidence are fixed,
-   fold-validated field classifiers and categorical priors may fill required
-   output fields. This improves extraction without turning an estimated field
-   into fabricated approval evidence.
+6. **Policy/output consistency.** Risk flags and missing policy evidence are
+   never imputed as approval evidence. Fold-validated field classifiers and
+   categorical priors may fill required output fields, including a neutral
+   in-window date for schema-only missingness. A one-way postcondition then
+   checks the emitted values and may demote an approval to review or denial
+   before confidence calibration. Output estimates therefore cannot leave an
+   unsafe approval that contradicts the serialized row.
 
 ## Research grounding
 

@@ -18,8 +18,8 @@ def _extract(path: Path) -> dict:
 def build_prediction(evidence: dict, engine: DecisionEngine) -> dict:
     record = extract_fields(evidence["case_id"], evidence["pages"])
     record = engine.correct_record(record, evidence["pages"])
-    decision = engine.decide(record, evidence["pages"])
     prediction = engine.output_fields(record, evidence["pages"])
+    decision = engine.decide(record, evidence["pages"], emitted_output=prediction)
     prediction["adjudication"] = decision.adjudication
     prediction["confidence"] = decision.confidence
     return prediction

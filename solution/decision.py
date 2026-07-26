@@ -27,6 +27,14 @@ CONFIDENCE_GUARDRAIL_SOURCES = (
     "stale_non_diplomatic_packet",
     "unpaid_fee",
     "combined_review_flags",
+    "emitted_disqualifying_risk",
+    "emitted_revoked_sponsor",
+    "emitted_transit_class",
+    "emitted_stale_non_diplomatic_packet",
+    "emitted_unpaid_fee",
+    "emitted_combined_review_flags",
+    "emitted_review_risk",
+    "emitted_missing_policy_evidence",
 )
 CONFIDENCE_DOCUMENT_TYPES = (
     "manual",
@@ -149,6 +157,68 @@ def evidence_policy(
     if core_missing & set(record.missing_fields):
         return "NEEDS_REVIEW", 0.82, "missing_policy_evidence"
     return "APPROVED", 0.88, "complete_policy_evidence"
+
+
+def emitted_policy_guardrail(
+    record: Extraction,
+    output: dict,
+    pages: list[PageEvidence],
+) -> tuple[str, float, str] | None:
+    """Prevent serialized fields from contradicting the serialized decision.
+
+    Output-only priors and high-confidence field corrections improve extraction,
+    but they may change a policy-bearing value after the original record was
+    adjudicated. This second pass is deliberately one-way: it can only make an
+    approval more conservative.
+    """
+    output_flags = (
+        set()
+        if output["risk_flags"] == "none"
+        else set(str(output["risk_flags"]).split("|"))
+    )
+    visa_class = str(output["visa_class"])
+    sponsor_id = str(output["sponsor_id"])
+    fee_status = str(output["fee_status"])
+    text = normalized(visible_text(pages))
+
+    if output_flags & DISQUALIFYING_FLAGS:
+        return "DENIED", 0.96, "emitted_disqualifying_risk"
+    if sponsor_id in REVOKED_SPONSORS and visa_class != "DIP-1":
+        return "DENIED", 0.96, "emitted_revoked_sponsor"
+    if visa_class == "TRANSIT-7":
+        return "DENIED", 0.94, "emitted_transit_class"
+
+    arrival_text = str(output["arrival_date"])
+    try:
+        arrival = date.fromisoformat(arrival_text)
+    except ValueError:
+        arrival = None
+    if (
+        arrival
+        and arrival != date(1900, 1, 1)
+        and arrival < date(2026, 1, 1)
+        and visa_class != "DIP-1"
+    ):
+        return "DENIED", 0.93, "emitted_stale_non_diplomatic_packet"
+
+    waiver_visible = "HARDSHIP WAIVER" in text or "WAIVER APPROVED" in text
+    if fee_status == "unpaid" and not waiver_visible:
+        return "DENIED", 0.95, "emitted_unpaid_fee"
+    if len(output_flags & REVIEW_FLAGS) >= 2 and "RESCINDED DENIAL" not in text:
+        return "DENIED", 0.82, "emitted_combined_review_flags"
+    if output_flags & REVIEW_FLAGS:
+        return "NEEDS_REVIEW", 0.88, "emitted_review_risk"
+
+    manual, _ = explicit_manual_finding(pages)
+    if arrival_text == "1900-01-01":
+        return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
+    if manual != "APPROVED":
+        core_missing = {"visa_class", "arrival_date"}
+        if visa_class != "DIP-1":
+            core_missing.add("sponsor_id")
+        if core_missing & set(record.missing_fields) or record.fee_status == "unknown":
+            return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
+    return None
 
 
 def expected_utility_label(probabilities: np.ndarray, classes: list[str]) -> str:
@@ -388,7 +458,7 @@ class DecisionEngine:
     def output_fields(
         self, record: Extraction, raw_pages: list[dict] | list[PageEvidence]
     ) -> dict:
-        """Apply extraction-only estimates after policy and confidence are fixed."""
+        """Apply extraction estimates before the final policy postcondition."""
         output_fallbacks = (
             self.bundle.get("output_fallbacks", {}) if self.bundle else {}
         )
@@ -416,7 +486,10 @@ class DecisionEngine:
         return output
 
     def decide(
-        self, record: Extraction, raw_pages: list[dict] | list[PageEvidence]
+        self,
+        record: Extraction,
+        raw_pages: list[dict] | list[PageEvidence],
+        emitted_output: dict | None = None,
     ) -> Decision:
         pages = [
             page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
@@ -442,6 +515,24 @@ class DecisionEngine:
             )
             confidence = probability_map[adjudication]
             source = "cost_sensitive_hybrid"
+
+        output = (
+            emitted_output
+            if emitted_output is not None
+            else self.output_fields(record, pages)
+        )
+        emitted_guardrail = emitted_policy_guardrail(record, output, pages)
+        if emitted_guardrail:
+            emitted_label, emitted_confidence, emitted_source = emitted_guardrail
+            should_apply = (emitted_label == "DENIED" and adjudication != "DENIED") or (
+                emitted_label == "NEEDS_REVIEW" and adjudication == "APPROVED"
+            )
+            if should_apply:
+                adjudication = emitted_label
+                model_support = probability_map.get(adjudication, 1 / 3)
+                confidence = 0.75 * emitted_confidence + 0.25 * model_support
+                source = emitted_source
+                guardrail = emitted_guardrail
 
         if self.bundle and "confidence_model" in self.bundle:
             features = confidence_feature_row(

@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pymupdf
 
-from solution.decision import DecisionEngine, evidence_policy, visible_text
+from solution.decision import (
+    DecisionEngine,
+    emitted_policy_guardrail,
+    evidence_policy,
+    visible_text,
+)
 from solution.fields import extract_fields
 from solution.pdf import PageEvidence, _tsv_to_text, visible_native_text
 
@@ -128,6 +133,86 @@ class FieldResolutionTests(unittest.TestCase):
         )
         self.assertEqual(paid.fee_status, "paid")
         self.assertEqual(waived.fee_status, "waived")
+
+    def test_visible_sponsor_correction_outranks_original_value(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\n"
+                "Visa Class: XW-1\n"
+                "Sponsor ID: SPN-0007\n"
+                "Arrival Date: 2026-05-10\n"
+                "Manual correction: sponsor is SPN-2836.",
+                "intake",
+            ),
+            page("Sponsor Attestation Letter\nSponsor ID: SPN-2836", "sponsor", 2),
+            page("Finding: APPROVED", "manual", 3),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.sponsor_id, "SPN-2836")
+        self.assertEqual(record.risk_flags, "none")
+
+    def test_manual_approval_supersedes_ambiguous_embargo_review_marker(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\nArrival Date: 2026-05-10",
+                "intake",
+            ),
+            page("Registry Status: EMBARGO REVIEW", "registry", 2),
+            page("Finding: APPROVED", "manual", 3),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.risk_flags, "none")
+
+    def test_emitted_disqualifying_risk_cannot_remain_approved(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\nArrival Date: 2026-05-10",
+                "intake",
+            ),
+            page("Finding: APPROVED\nPlanetary embargo is active.", "manual", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
+        self.assertEqual(guardrail[0], "DENIED")
+
+    def test_emitted_revoked_sponsor_is_denied_outside_dip(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: XW-1\n"
+                "Sponsor ID: SPN-0007\nArrival Date: 2026-05-10",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
+        self.assertEqual(guardrail[0], "DENIED")
+
+    def test_emitted_review_flag_routes_approval_to_review(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: XW-1\n"
+                "Sponsor ID: SPN-1042\nArrival Date: 2026-05-10\n"
+                "Risk: sponsor mismatch",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
+        self.assertEqual(guardrail[0], "NEEDS_REVIEW")
+
+    def test_emitted_placeholder_date_routes_to_review(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: XW-1\nSponsor ID: SPN-1042",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
+        self.assertEqual(guardrail[0], "NEEDS_REVIEW")
 
     def test_extracts_clean_multi_page_packet(self):
         pages = [
