@@ -122,6 +122,27 @@ class FieldResolutionTests(unittest.TestCase):
         self.assertEqual(record.risk_flags, "biohazard_red")
         self.assertEqual(record.fee_status, "waived")
 
+    def test_recovers_anchored_risk_from_unknown_damaged_page(self):
+        pages = [
+            page(
+                "Disqualltying risk flag: planetary_embergo.",
+                "unknown",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.risk_flags, "planetary_embargo")
+
+    def test_missing_risk_panel_routes_to_illegible_biometrics(self):
+        pages = [
+            page(
+                "FORM B-13: Biometric Scan Slip\n"
+                "Observed flags: [RISK PANEL MISSING]",
+                "biometric",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.risk_flags, "illegible_biometrics")
+
     def test_recovers_fee_from_visible_receipt_amount_and_waiver_code(self):
         paid = extract_fields(
             "MIB-999998",

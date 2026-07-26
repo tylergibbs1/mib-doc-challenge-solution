@@ -236,6 +236,7 @@ def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list
             "BIOMETRICS ILLEGIBLE",
             "BIOMETRIC UNREADABLE",
             "BIOMETRICS UNREADABLE",
+            "RISK PANEL MISSING",
         ),
         "memory_tampering": ("MEMORY TAMPERING", "MEMORY ALTERATION"),
         "planetary_embargo": (
@@ -258,8 +259,24 @@ def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list
             found.add(flag)
     # OCR-tolerant recovery is still visible evidence: restrict it to document
     # types that can actually state a risk finding and require a strong match.
+    # A badly scanned risk page can lose its document heading while retaining
+    # an anchored field label; that is still visible evidence, not an inferred
+    # flag. This recovers e.g. "planetary_embergo" only beside "risk flag".
     for page in pages:
-        if page.document_type not in {"biometric", "manual", "registry"}:
+        page_norm = normalized(page.text)
+        anchored_risk_page = any(
+            anchor in page_norm
+            for anchor in (
+                "RISK FLAG",
+                "OBSERVED FLAGS",
+                "OBSERVED FISAS",
+                "SPECIES MATCH",
+            )
+        )
+        if (
+            page.document_type not in {"biometric", "manual", "registry"}
+            and not anchored_risk_page
+        ):
             continue
         flag, score = best_lexicon(page.text, RISK_FLAGS, cutoff=0.84)
         if flag and score >= 0.84:
