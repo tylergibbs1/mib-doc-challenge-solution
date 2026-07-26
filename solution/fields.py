@@ -7,9 +7,11 @@ from datetime import date
 from rapidfuzz import fuzz
 
 from .constants import (
+    DISQUALIFYING_FLAGS,
     DOCUMENT_PRIORITIES,
     HOME_WORLDS,
     PURPOSES,
+    REVIEW_FLAGS,
     RISK_FLAGS,
     SPECIES_CODES,
     VISA_CLASSES,
@@ -193,13 +195,47 @@ def visible_output_corrections(
         page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
         for page in raw_pages
     ]
+    corrections: dict[str, str] = {}
     arrival_date = str(output["arrival_date"])
     native_dates = {
         value for page in pages for value in _extract_dates(page.native_text)
     }
     if arrival_date.startswith("2028-") and arrival_date not in native_dates:
-        return {"arrival_date": f"2026-{arrival_date[5:]}"}
-    return {}
+        corrections["arrival_date"] = f"2026-{arrival_date[5:]}"
+
+    current_flags = (
+        set()
+        if output["risk_flags"] == "none"
+        else set(str(output["risk_flags"]).split("|"))
+    )
+    allowed_secondary_flags: set[str] = set()
+    if current_flags & DISQUALIFYING_FLAGS:
+        allowed_secondary_flags = set(RISK_FLAGS)
+    elif current_flags & REVIEW_FLAGS:
+        allowed_secondary_flags = set(REVIEW_FLAGS)
+    recovered_flags = set(current_flags)
+    for page in pages:
+        page_norm = normalized(page.text)
+        anchored_risk_page = any(
+            anchor in page_norm
+            for anchor in (
+                "RISK FLAG",
+                "OBSERVED FLAGS",
+                "OBSERVED FISAS",
+                "SPECIES MATCH",
+            )
+        )
+        if (
+            page.document_type not in {"biometric", "manual", "registry"}
+            and not anchored_risk_page
+        ):
+            continue
+        for flag in allowed_secondary_flags:
+            if fuzzy_presence(page.text, flag) >= 0.80:
+                recovered_flags.add(flag)
+    if recovered_flags != current_flags:
+        corrections["risk_flags"] = "|".join(sorted(recovered_flags))
+    return corrections
 
 
 def _page_lines(page: PageEvidence) -> list[str]:

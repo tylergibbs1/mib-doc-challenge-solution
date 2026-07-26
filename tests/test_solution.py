@@ -349,6 +349,23 @@ class FieldResolutionTests(unittest.TestCase):
             {},
         )
 
+    def test_output_recovers_secondary_flag_without_increasing_policy_severity(self):
+        pages = [
+            page(
+                "FORM B-13: Blometric Scan Slip\n"
+                "Observed flags: bichazard_yed, Begibie_biometrics",
+                "biometric",
+            )
+        ]
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "biohazard_red",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["risk_flags"],
+            "biohazard_red|illegible_biometrics",
+        )
+
     def test_manual_finding_has_highest_precedence(self):
         pages = [
             page(
