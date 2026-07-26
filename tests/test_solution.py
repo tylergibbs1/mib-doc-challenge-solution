@@ -183,6 +183,17 @@ class FieldResolutionTests(unittest.TestCase):
         self.assertEqual(record.sponsor_id, "SPN-2836")
         self.assertEqual(record.risk_flags, "none")
 
+    def test_visible_applicant_correction_outranks_adjacent_name(self):
+        pages = [
+            page(
+                "Applicant: Adjacent Decoy\n"
+                "Manual correction: applicant is Nexix Nexvara.",
+                "intake",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.applicant_name, "Nexix Nexvara")
+
     def test_manual_approval_supersedes_ambiguous_embargo_review_marker(self):
         pages = [
             page(

@@ -144,6 +144,23 @@ def _clean_name(value: str) -> str:
     return " ".join(word.capitalize() for word in words)
 
 
+def _explicit_name_correction(text: str) -> str:
+    for line in text.splitlines():
+        line_norm = normalized(line)
+        if "CORRECTION" not in line_norm or "APPLICANT" not in line_norm:
+            continue
+        match = re.search(
+            r"\bapplicant\s+(?:is|to)\s+(.+?)\s*$",
+            line,
+            re.IGNORECASE,
+        )
+        if match:
+            name = _clean_name(match.group(1))
+            if name:
+                return name
+    return ""
+
+
 def _correct_digits(value: str) -> str:
     table = str.maketrans({"O": "0", "I": "1", "L": "1", "S": "5", "B": "8"})
     return value.upper().translate(table)
@@ -404,6 +421,11 @@ def extract_fields(
         lines = _page_lines(page)
         page_quality = max(0.35, min(1.0, page.ocr_mean_confidence / 80.0))
 
+        name_correction = _explicit_name_correction(page.text)
+        if name_correction:
+            candidates["applicant_name"].append(
+                (10.0, page.page_number, name_correction)
+            )
         for raw_name in _label_value(lines, ("Applicant", "Registry Name")):
             name = _clean_name(raw_name)
             if name:
