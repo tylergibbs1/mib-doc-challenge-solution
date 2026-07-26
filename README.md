@@ -1,5 +1,9 @@
 # MIB Doc Challenge: Intergalactic Intake
 
+> This repository is Tyler Gibbs's visible-evidence OCR and calibrated ML
+> submission. See [SOLUTION.md](SOLUTION.md) for the architecture, research
+> grounding, reproducible training steps, and exact offline Docker command.
+
 MIB's intake desk reviews extraterrestrial work-authorization packets: scanned forms, sponsor letters, biometric slips, registry portraits, inspection stamps. The legacy pipeline is brittle and needs a high degree of human review. You are building its replacement.
 
 **The mission:** given a folder of messy PDF case packets, extract each applicant's record and decide whether the case is `APPROVED`, `DENIED`, or `NEEDS_REVIEW`.
