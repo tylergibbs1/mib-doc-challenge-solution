@@ -5,7 +5,7 @@ import pymupdf
 
 from solution.decision import DecisionEngine, visible_text
 from solution.fields import extract_fields
-from solution.pdf import PageEvidence, visible_native_text
+from solution.pdf import PageEvidence, _tsv_to_text, visible_native_text
 
 
 def page(text: str, document_type: str, number: int = 1) -> PageEvidence:
@@ -22,6 +22,20 @@ def page(text: str, document_type: str, number: int = 1) -> PageEvidence:
 
 
 class VisibleEvidenceTests(unittest.TestCase):
+    def test_tesseract_quote_does_not_swallow_tsv_rows(self):
+        header = (
+            "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\t"
+            "left\ttop\twidth\theight\tconf\ttext\n"
+        )
+        rows = (
+            '5\t1\t1\t1\t1\t1\t10\t10\t5\t8\t91\t"\n'
+            "5\t1\t1\t1\t1\t2\t20\t10\t20\t8\t92\tFee\n"
+            "5\t1\t1\t1\t1\t3\t45\t10\t30\t8\t93\twaived\n"
+        )
+        text, confidence = _tsv_to_text(header + rows)
+        self.assertEqual(text, '" Fee waived')
+        self.assertAlmostEqual(confidence, 92.0)
+
     def test_white_native_injection_is_rejected(self):
         document = pymupdf.open()
         pdf_page = document.new_page()
@@ -53,6 +67,15 @@ class VisibleEvidenceTests(unittest.TestCase):
 
 
 class FieldResolutionTests(unittest.TestCase):
+    def test_recovers_visible_ocr_damage_in_fee_and_risk(self):
+        pages = [
+            page("Biometric Inspection\nObserved flags: biohazerd_red", "biometric"),
+            page("MIB Fee Receipt\nFeo sune: warved", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.risk_flags, "biohazard_red")
+        self.assertEqual(record.fee_status, "waived")
+
     def test_extracts_clean_multi_page_packet(self):
         pages = [
             page(

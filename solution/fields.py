@@ -179,6 +179,22 @@ def _explicit_correction(text: str, values: tuple[str, ...]) -> str:
     return ""
 
 
+def _fuzzy_fee(text: str) -> tuple[str, float]:
+    tokens = re.findall(r"[a-z]{3,9}", text.casefold())
+    scored = sorted(
+        (
+            max((fuzz.ratio(token, fee) for token in tokens), default=0.0),
+            fee,
+        )
+        for fee in ("unpaid", "waived", "paid", "unknown")
+    )
+    best_score, best_fee = scored[-1]
+    next_score = scored[-2][0]
+    if best_score >= 76.0 and best_score - next_score >= 4.0:
+        return best_fee, best_score / 100.0
+    return "", best_score / 100.0
+
+
 def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list[str]:
     text = "\n".join(page.text for page in pages)
     norm = normalized(text)
@@ -203,6 +219,14 @@ def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list
             found.add(flag)
             continue
         if any(phrase in norm for phrase in phrases[flag]):
+            found.add(flag)
+    # OCR-tolerant recovery is still visible evidence: restrict it to document
+    # types that can actually state a risk finding and require a strong match.
+    for page in pages:
+        if page.document_type not in {"biometric", "manual", "registry"}:
+            continue
+        flag, score = best_lexicon(page.text, RISK_FLAGS, cutoff=0.84)
+        if flag and score >= 0.84:
             found.add(flag)
 
     # Resolve cross-document conflicts only when both documents yield trustworthy values.
@@ -303,6 +327,7 @@ def extract_fields(case_id: str, raw_pages: list[dict] | list[PageEvidence]) -> 
 
         lowered = page.text.casefold()
         labeled_fees = [value.casefold() for value in _label_value(lines, ("Fee Status",))]
+        exact_fee = False
         for fee in ("paid", "waived", "unpaid", "unknown"):
             if (
                 fee in labeled_fees
@@ -310,6 +335,13 @@ def extract_fields(case_id: str, raw_pages: list[dict] | list[PageEvidence]) -> 
                 or page.document_type == "fee" and re.search(rf"\b{fee}\b", lowered)
             ):
                 candidates["fee_status"].append((8.0 * page_quality, page.page_number, fee))
+                exact_fee = True
+        if page.document_type == "fee" and not exact_fee:
+            fee, match_score = _fuzzy_fee(page.text)
+            if fee:
+                candidates["fee_status"].append(
+                    (6.0 * page_quality * match_score, page.page_number, fee)
+                )
 
     values: dict[str, str] = {}
     quality_scores: list[float] = []

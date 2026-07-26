@@ -13,7 +13,9 @@ No LLM, VLM, cloud OCR, API key, or runtime network access is used.
 2. **Raster OCR.** Every page is rendered at 220 DPI and read by Tesseract.
    Low-quality pages get contrast enhancement and form-line removal. A Poppler
    render is used as an independent fallback because the two rasterizers have
-   complementary failure modes on damaged scans.
+   complementary failure modes on damaged scans. Tesseract TSV is parsed with
+   bounded tab splitting so recognized quote glyphs cannot absorb coordinate
+   rows into the evidence text.
 3. **Evidence resolution.** Closed-vocabulary fields use fuzzy OCR matching;
    names, dates, and sponsor IDs use context-specific parsers. Candidate values
    follow the manual's document precedence, including explicit correction

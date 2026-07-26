@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import io
 import os
 import re
@@ -139,25 +138,26 @@ def _ocr_quality(text: str, confidence: float) -> float:
 def _tsv_to_text(tsv: str) -> tuple[str, float]:
     groups: dict[tuple[str, str, str, str], list[tuple[int, str]]] = {}
     confidences: list[float] = []
-    reader = csv.DictReader(io.StringIO(tsv), delimiter="\t")
-    for row in reader:
-        word = str(row.get("text", "")).strip()
+    # Tesseract emits TSV, not RFC-compliant quoted CSV. In particular, a
+    # recognized `"` glyph is not escaped; csv.DictReader can then consume
+    # subsequent coordinate rows as one giant text field. Split a maximum of
+    # eleven times so the final OCR-text column is preserved verbatim.
+    for raw_line in io.StringIO(tsv):
+        parts = raw_line.rstrip("\r\n").split("\t", 11)
+        if len(parts) != 12 or parts[0] == "level":
+            continue
+        word = parts[11].strip()
         if not word:
             continue
         try:
-            confidence = float(row.get("conf", "-1"))
+            confidence = float(parts[10])
         except ValueError:
             confidence = -1.0
         if confidence >= 0:
             confidences.append(confidence)
-        key = (
-            row.get("page_num", ""),
-            row.get("block_num", ""),
-            row.get("par_num", ""),
-            row.get("line_num", ""),
-        )
+        key = (parts[1], parts[2], parts[3], parts[4])
         try:
-            left = int(row.get("left", "0"))
+            left = int(parts[6])
         except ValueError:
             left = 0
         groups.setdefault(key, []).append((left, word))

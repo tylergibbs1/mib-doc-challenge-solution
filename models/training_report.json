@@ -2,19 +2,19 @@
   "cases": 1000,
   "confusion": [
     [
-      109,
-      29,
-      151
+      121,
+      30,
+      138
     ],
     [
       5,
-      376,
-      50
+      384,
+      42
     ],
     [
-      14,
-      25,
-      241
+      15,
+      27,
+      238
     ]
   ],
   "confusion_labels": [
@@ -24,30 +24,30 @@
   ],
   "decision_policy": {
     "approve_margin": 0.30000000000000004,
-    "approve_threshold": 0.49999999999999994,
-    "deny_threshold": 0.5499999999999999
+    "approve_threshold": 0.44999999999999996,
+    "deny_threshold": 0.49999999999999994
   },
   "field_accuracy": {
     "applicant_name": 0.819,
     "arrival_date": 0.836,
-    "declared_purpose": 0.887,
-    "fee_status": 0.779,
+    "declared_purpose": 0.889,
+    "fee_status": 0.774,
     "home_world": 0.895,
-    "risk_flags": 0.721,
+    "risk_flags": 0.739,
     "species_code": 0.933,
     "sponsor_id": 0.783,
     "visa_class": 0.864
   },
   "oof_scores": {
-    "accuracy": 0.726,
-    "calibration_score": 14.859812855460074,
+    "accuracy": 0.743,
+    "calibration_score": 14.989849795723034,
     "catastrophic_false_approvals": 5,
-    "classification_score": 62.29,
-    "combined_score": 77.14981285546007,
-    "conservative_reviews": 201,
-    "mean_brier": 0.12850467861349812,
-    "missed_reviews": 39,
-    "other_wrong": 29
+    "classification_score": 63.26,
+    "combined_score": 78.24984979572304,
+    "conservative_reviews": 180,
+    "mean_brier": 0.12525375510692416,
+    "missed_reviews": 42,
+    "other_wrong": 30
   },
-  "text_weight": 0.9
+  "text_weight": 0.85
 }

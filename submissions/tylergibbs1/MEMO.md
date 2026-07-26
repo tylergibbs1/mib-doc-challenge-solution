@@ -55,17 +55,17 @@ or model-selection feedback. The pipeline contains no per-case lookup table and
 does not use filenames for anything beyond the required case ID.
 
 On five-fold out-of-fold public training predictions, the selected policy
-achieved 72.6% adjudication accuracy, 62.29/80 classification points,
-14.86/20 calibration points, and five catastrophic false approvals. Closed
+achieved 74.3% adjudication accuracy, 63.26/80 classification points,
+14.99/20 calibration points, and five catastrophic false approvals. Closed
 field extraction is strongest on species (93.3%), home world (89.5%), purpose
-(88.7%), visa class (86.4%), and arrival date (83.6%). The fitted full-data
-smoke evaluation scores 133.11/150 with zero false approvals; I report it only
+(88.9%), visa class (86.4%), and arrival date (83.6%). The fitted full-data
+smoke evaluation scores 134.94/150 with zero false approvals; I report it only
 as an integration check, not as a generalization estimate.
 
 Tests cover the public evaluator/schema contract, white and off-page text
 rejection, multi-page field resolution, manual-note precedence, and stale
-packet policy. The fitted artifact is about 19 MB and the Docker image is about
-256 MB, both comfortably inside the published limits. A complete 1,000-packet
+packet policy. The fitted artifact is about 17 MB and the Docker image is about
+255 MB, both comfortably inside the published limits. A complete 1,000-packet
 exact-contract Docker run took 23 minutes 38 seconds (1.42 seconds per PDF),
 and the final anti-overfit rebuild passed a read-only, network-disabled parity
 smoke without nested parallelism or runtime warnings.
