@@ -7,6 +7,16 @@ import os
 import sys
 from pathlib import Path
 
+# Prevent each worker's OCR and numerical libraries from starting nested
+# thread pools. This must happen before importing the ML/OCR modules.
+for variable in (
+    "OMP_THREAD_LIMIT",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(variable, "1")
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
