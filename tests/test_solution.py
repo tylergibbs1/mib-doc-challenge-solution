@@ -132,6 +132,17 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         self.assertEqual(record.risk_flags, "planetary_embargo")
 
+    def test_recovers_single_character_risk_corruption_on_biometric_page(self):
+        pages = [
+            page(
+                "FORM B-13: Blometric Scan Slip\n"
+                "Observed flags: bichazard_yed",
+                "biometric",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.risk_flags, "biohazard_red")
+
     def test_missing_risk_panel_routes_to_illegible_biometrics(self):
         pages = [
             page(

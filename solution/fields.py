@@ -278,8 +278,8 @@ def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list
             and not anchored_risk_page
         ):
             continue
-        flag, score = best_lexicon(page.text, RISK_FLAGS, cutoff=0.84)
-        if flag and score >= 0.84:
+        flag, score = best_lexicon(page.text, RISK_FLAGS, cutoff=0.80)
+        if flag and score >= 0.80:
             found.add(flag)
 
     # Resolve cross-document conflicts only when both documents yield trustworthy values.
