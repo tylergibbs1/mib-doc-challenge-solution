@@ -10,14 +10,12 @@ from pathlib import Path
 
 import joblib
 import numpy as np
-from sklearn import set_config
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
-from sklearn.multiclass import OneVsRestClassifier
 from sklearn.pipeline import FeatureUnion, make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -35,7 +33,6 @@ from .fields import Extraction, extract_fields, visible_output_corrections
 from .pdf import PageEvidence, safe_extract_pdf
 
 CLASSES = np.array(ADJUDICATIONS)
-set_config(enable_metadata_routing=True)
 FIELD_WEIGHTS = {
     "applicant_name": 5,
     "species_code": 6,
@@ -165,15 +162,7 @@ def make_text_model() -> object:
             ],
             transformer_weights={"char": 1.0, "word": 0.7},
         ),
-        OneVsRestClassifier(
-            LogisticRegression(
-                C=3.0,
-                dual=True,
-                max_iter=2500,
-                random_state=8090,
-                solver="liblinear",
-            ).set_fit_request(sample_weight=True)
-        ),
+        LogisticRegression(C=3.0, max_iter=2500, random_state=8090),
     )
 
 
@@ -185,7 +174,7 @@ def make_structured_model() -> object:
             ("categorical", OneHotEncoder(handle_unknown="ignore"), categorical),
             (
                 "date",
-                StandardScaler().set_fit_request(sample_weight=False),
+                StandardScaler(),
                 date_column,
             ),
         ]
@@ -201,7 +190,7 @@ def make_structured_model() -> object:
             # process-parallel. Avoid nested joblib pools and warning floods.
             n_jobs=1,
             random_state=8090,
-        ).set_fit_request(sample_weight=True),
+        ),
     )
 
 
@@ -438,7 +427,7 @@ def train(
         fold_text_model.fit(
             texts[train_indices],
             y[train_indices],
-            sample_weight=raw_guardrail_weight[train_indices],
+            logisticregression__sample_weight=raw_guardrail_weight[train_indices],
         )
         train_labels = [label_rows[index] for index in train_indices]
         fold_output_fallbacks = learn_output_fallbacks(train_labels)
@@ -470,7 +459,7 @@ def train(
                 [structured_row(record) for record in corrected_train], dtype=object
             ),
             y[train_indices],
-            sample_weight=np.array(
+            extratreesclassifier__sample_weight=np.array(
                 [
                     0.25 if deterministic_guardrail(record, pages[index]) else 1.0
                     for record, index in zip(corrected_train, train_indices)
@@ -770,7 +759,7 @@ def train(
     text_model.fit(
         texts,
         y,
-        sample_weight=raw_guardrail_weight,
+        logisticregression__sample_weight=raw_guardrail_weight,
     )
     field_models = fit_field_models(text_model, texts, label_rows)
     final_engine = correction_engine(text_model, field_models, label_rows)
@@ -781,7 +770,7 @@ def train(
     structured_model.fit(
         np.array([structured_row(record) for record in final_records], dtype=object),
         y,
-        sample_weight=np.array(
+        extratreesclassifier__sample_weight=np.array(
             [
                 0.25 if deterministic_guardrail(record, case_pages) else 1.0
                 for record, case_pages in zip(final_records, pages)
