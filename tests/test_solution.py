@@ -204,6 +204,26 @@ class FieldResolutionTests(unittest.TestCase):
         self.assertEqual(record.sponsor_id, "SPN-2836")
         self.assertEqual(record.risk_flags, "none")
 
+    def test_output_prefers_single_clear_sponsor_attestation_id(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nSponsor ID: SPN-0007",
+                "intake",
+            ),
+            page(
+                "Sponsor Attestation Letter\n"
+                "Sponsor SPN-2836 attests that Zed Zarnax is expected on Earth.",
+                "sponsor",
+                2,
+            ),
+        ]
+        output = extract_fields("MIB-999999", pages).output_fields()
+        self.assertEqual(output["sponsor_id"], "SPN-0007")
+        self.assertEqual(
+            visible_output_corrections(output, pages)["sponsor_id"],
+            "SPN-2836",
+        )
+
     def test_visible_applicant_correction_outranks_adjacent_name(self):
         pages = [
             page(

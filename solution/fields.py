@@ -258,6 +258,17 @@ def visible_output_corrections(
         for page in pages
     ):
         corrections["fee_status"] = "unpaid"
+    attested_sponsors = {
+        sponsor_id
+        for page in pages
+        if page.document_type == "sponsor"
+        and "SPONSOR ATTESTATION" in normalized(page.text)
+        for sponsor_id in _extract_sponsors(page.text)
+    }
+    if len(attested_sponsors) == 1:
+        attested_sponsor = next(iter(attested_sponsors))
+        if attested_sponsor != output["sponsor_id"]:
+            corrections["sponsor_id"] = attested_sponsor
     return corrections
 
 
