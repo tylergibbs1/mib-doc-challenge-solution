@@ -173,6 +173,20 @@ class FieldResolutionTests(unittest.TestCase):
         )
         self.assertEqual(record.fee_status, "paid")
 
+    def test_recovers_unpaid_fee_from_trusted_manual_reason(self):
+        pages = [
+            page(
+                "Manual Adjudicator Note\n"
+                "Finding: DENIED. Reason: Mandatory fee unpaid.",
+                "manual",
+            )
+        ]
+        output = extract_fields("MIB-999999", pages).output_fields()
+        self.assertEqual(
+            visible_output_corrections(output, pages)["fee_status"],
+            "unpaid",
+        )
+
     def test_visible_sponsor_correction_outranks_original_value(self):
         pages = [
             page(

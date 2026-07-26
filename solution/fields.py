@@ -252,6 +252,12 @@ def visible_output_corrections(
                 recovered_flags.add(flag)
     if recovered_flags != current_flags:
         corrections["risk_flags"] = "|".join(sorted(recovered_flags))
+    if any(
+        page.document_type == "manual"
+        and "MANDATORY FEE UNPAID" in normalized(page.text)
+        for page in pages
+    ):
+        corrections["fee_status"] = "unpaid"
     return corrections
 
 
