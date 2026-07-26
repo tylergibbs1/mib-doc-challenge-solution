@@ -5,6 +5,7 @@ import pymupdf
 
 from solution.decision import (
     DecisionEngine,
+    deterministic_guardrail,
     emitted_policy_guardrail,
     evidence_policy,
     visible_text,
@@ -472,6 +473,18 @@ class FieldResolutionTests(unittest.TestCase):
         )
         self.assertEqual(decision.adjudication, "DENIED")
         self.assertEqual(decision.source, "visible_manual_finding")
+
+    def test_manual_reason_recovers_destroyed_finding_line(self):
+        pages = [
+            page(
+                "Manual Adjudicator Note\nFinding: |\n"
+                "Reason: Packet contains damaged or contradictory visible evidence.",
+                "manual",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        decision = deterministic_guardrail(record, pages)
+        self.assertEqual(decision[0], "NEEDS_REVIEW")
 
     def test_stale_non_diplomatic_packet_is_denied(self):
         pages = [

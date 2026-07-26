@@ -96,6 +96,40 @@ def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
         if len(exact_labels) == 1:
             candidates.append((page.page_number, 0.9, exact_labels[0]))
     if not candidates:
+        # On damaged notes the finding line can be destroyed while the signed
+        # reason remains readable. Use only policy-specific reason phrases,
+        # never generic words such as "denial" that may occur in a watermark.
+        reason_markers = {
+            "APPROVED": (
+                "APPROVAL SUPPORTED BY SURVIVING VISIBLE EVIDENCE",
+                "CLEAN OR EXCEPTION QUALIFIED PACKET",
+            ),
+            "DENIED": (
+                "DENIAL SUPPORTED BY DAMAGED REGISTRY EVIDENCE",
+                "MANDATORY FEE UNPAID",
+                "REVOKED SPONSOR",
+                "DISQUALIFYING RISK FLAG",
+            ),
+            "NEEDS_REVIEW": (
+                "ARRIVAL DATE MISSING FROM TRUSTED VISIBLE EVIDENCE",
+                "DAMAGED OR CONTRADICTORY VISIBLE EVIDENCE",
+                "FEE STATUS UNKNOWN",
+                "RESCINDED DENIAL",
+                "REVIEW ONLY RISK FLAG",
+            ),
+        }
+        for page in pages:
+            if page.document_type != "manual":
+                continue
+            norm = normalized(page.text)
+            matched = [
+                label
+                for label, markers in reason_markers.items()
+                if any(marker in norm for marker in markers)
+            ]
+            if len(matched) == 1:
+                candidates.append((page.page_number, 0.88, matched[0]))
+    if not candidates:
         return "", 0.0
     _, score, label = max(candidates)
     return label, score
