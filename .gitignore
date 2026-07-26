@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 *.pyc
 .DS_Store
+results.tsv
+run.log
 tmp/
 output/
 .env

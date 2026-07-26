@@ -1,0 +1,39 @@
+{
+  "tag": "jul26-145",
+  "modifiable_files": [
+    "solution/constants.py",
+    "solution/decision.py",
+    "solution/fields.py",
+    "solution/pdf.py",
+    "solution/train.py",
+    "tests/test_solution.py"
+  ],
+  "readonly_files": [
+    "DOCKER_SUBMISSION.md",
+    "EVALUATION.md",
+    "FIELD_MANUAL.md",
+    "README.md",
+    "SOLUTION.md",
+    "data/DATASET_CARD.md",
+    "data/train_labels.csv",
+    "requirements.txt",
+    "scripts/evaluate.py",
+    "scripts/predict_cached.py",
+    "scripts/validate_submission.py",
+    "solution/predict.py",
+    "tests/test_public_contract.py"
+  ],
+  "run_command": ".venv/bin/python -m solution.train --cache training_cache/train_visible_text.jsonl --model /tmp/mib-autoresearch-model.joblib --report /tmp/mib-autoresearch-report.json --workers 4 && .venv/bin/python -c \"import json; r=json.load(open('/tmp/mib-autoresearch-report.json')); s=r['oof_extraction_score']+r['oof_scores']['classification_score']+r['oof_scores']['calibration_score']; print(f'research_score: {s:.6f}'); print(f\\\"oof_accuracy: {r['oof_scores']['accuracy']:.6f}\\\"); print(f\\\"catastrophic_false_approvals: {r['oof_scores']['catastrophic_false_approvals']}\\\"); print(f\\\"extraction_score: {r['oof_extraction_score']:.6f}\\\")\"",
+  "metric_grep": "^research_score:",
+  "metric_name": "research_score",
+  "metric_direction": "higher",
+  "secondary_metrics": [
+    "^oof_accuracy:",
+    "^catastrophic_false_approvals:",
+    "^extraction_score:"
+  ],
+  "timeout_seconds": 900,
+  "setup_check": ".venv/bin/python -m unittest discover -s tests",
+  "no_new_dependencies": true,
+  "soft_constraints": "Never use validation labels, case-specific exceptions, or private data. Reject candidates with more than five OOF catastrophic false approvals. Preserve the current model and submission by writing experiment artifacts only under /tmp. Cached experiments cannot claim OCR gains. Confirm major gains with nested or grouped evaluation and the final candidate in the offline Docker contract."
+}
