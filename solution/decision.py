@@ -15,7 +15,7 @@ from .constants import (
     REVIEW_FLAGS,
     REVOKED_SPONSORS,
 )
-from .fields import Extraction, normalized
+from .fields import Extraction, normalized, visible_output_corrections
 from .pdf import PageEvidence
 
 CONFIDENCE_GUARDRAIL_SOURCES = (
@@ -461,16 +461,17 @@ class DecisionEngine:
             self.bundle.get("output_fallbacks", {}) if self.bundle else {}
         )
         output = record.output_fields(output_fallbacks)
+        pages = [
+            page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
+            for page in raw_pages
+        ]
         if (
             not self.bundle
             or not self.bundle.get("field_models")
             or not self.bundle.get("output_field_thresholds")
         ):
+            output.update(visible_output_corrections(output, pages))
             return output
-        pages = [
-            page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
-            for page in raw_pages
-        ]
         vectorizer = self.bundle["text_model"].steps[0][1]
         matrix = vectorizer.transform([visible_text(pages)])
         for field, threshold in self.bundle["output_field_thresholds"].items():
@@ -481,6 +482,7 @@ class DecisionEngine:
             index = int(np.argmax(probabilities))
             if float(probabilities[index]) >= float(threshold):
                 output[field] = str(model.classes_[index])
+        output.update(visible_output_corrections(output, pages))
         return output
 
     def decide(

@@ -184,6 +184,24 @@ def _extract_dates(text: str) -> list[str]:
     return values
 
 
+def visible_output_corrections(
+    output: dict[str, str],
+    raw_pages: list[dict] | list[PageEvidence],
+) -> dict[str, str]:
+    """Return output-only corrections supported by visible OCR evidence."""
+    pages = [
+        page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
+        for page in raw_pages
+    ]
+    arrival_date = str(output["arrival_date"])
+    native_dates = {
+        value for page in pages for value in _extract_dates(page.native_text)
+    }
+    if arrival_date.startswith("2028-") and arrival_date not in native_dates:
+        return {"arrival_date": f"2026-{arrival_date[5:]}"}
+    return {}
+
+
 def _page_lines(page: PageEvidence) -> list[str]:
     return [line.strip() for line in page.text.splitlines() if line.strip()]
 

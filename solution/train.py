@@ -31,7 +31,7 @@ from .decision import (
     threshold_policy_label,
     visible_text,
 )
-from .fields import Extraction, extract_fields
+from .fields import Extraction, extract_fields, visible_output_corrections
 from .pdf import PageEvidence, safe_extract_pdf
 
 CLASSES = np.array(ADJUDICATIONS)
@@ -611,6 +611,13 @@ def train(
         )
         for index in np.flatnonzero(replace_mask):
             output_overrides[index][field] = str(field_oof_values[field][index])
+    for index, (record, fallbacks, case_pages) in enumerate(
+        zip(corrected_records, output_fallbacks, pages)
+    ):
+        output = record.output_fields(fallbacks) | output_overrides[index]
+        output_overrides[index].update(
+            visible_output_corrections(output, case_pages)
+        )
     emitted_outputs = [
         record.output_fields(fallbacks) | overrides
         for record, fallbacks, overrides in zip(

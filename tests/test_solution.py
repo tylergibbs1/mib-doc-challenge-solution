@@ -9,7 +9,7 @@ from solution.decision import (
     evidence_policy,
     visible_text,
 )
-from solution.fields import extract_fields
+from solution.fields import extract_fields, visible_output_corrections
 from solution.pdf import PageEvidence, _tsv_to_text, visible_native_text
 
 
@@ -324,6 +324,30 @@ class FieldResolutionTests(unittest.TestCase):
         self.assertEqual(record.arrival_date, "2026-04-17")
         self.assertEqual(record.fee_status, "paid")
         self.assertFalse(record.missing_fields)
+
+    def test_corrects_scanned_2028_year_without_changing_native_future_date(self):
+        scanned_text = "Arrival Date: 2028-04-17"
+        scanned = PageEvidence(
+            page_number=1,
+            document_type="intake",
+            text=scanned_text,
+            native_text="",
+            ocr_text=scanned_text,
+            ocr_mean_confidence=80.0,
+            ocr_used=True,
+            visible_native_characters=0,
+        )
+        native = page(scanned_text, "intake")
+        scanned_output = extract_fields("MIB-999998", [scanned]).output_fields()
+        native_output = extract_fields("MIB-999999", [native]).output_fields()
+        self.assertEqual(
+            visible_output_corrections(scanned_output, [scanned])["arrival_date"],
+            "2026-04-17",
+        )
+        self.assertEqual(
+            visible_output_corrections(native_output, [native]),
+            {},
+        )
 
     def test_manual_finding_has_highest_precedence(self):
         pages = [
