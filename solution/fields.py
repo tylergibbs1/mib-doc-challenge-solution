@@ -264,6 +264,8 @@ def visible_output_corrections(
         if page.document_type == "sponsor"
         and "SPONSOR ATTESTATION" in normalized(page.text)
         for sponsor_id in _extract_sponsors(page.text)
+        if sponsor_id in _extract_sponsors(page.native_text)
+        or page.ocr_mean_confidence >= 90.0
     }
     if len(attested_sponsors) == 1:
         attested_sponsor = next(iter(attested_sponsors))

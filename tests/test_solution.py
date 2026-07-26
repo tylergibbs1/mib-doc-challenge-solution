@@ -224,6 +224,28 @@ class FieldResolutionTests(unittest.TestCase):
             "SPN-2836",
         )
 
+    def test_low_confidence_ocr_attestation_does_not_override_sponsor(self):
+        damaged = PageEvidence(
+            page_number=2,
+            document_type="sponsor",
+            text="Sponsor Attestation Letter\nSponsor ID: SPN-2838",
+            native_text="",
+            ocr_text="Sponsor Attestation Letter\nSponsor ID: SPN-2838",
+            ocr_mean_confidence=75.0,
+            ocr_used=True,
+            visible_native_characters=0,
+        )
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+        }
+        self.assertNotIn(
+            "sponsor_id",
+            visible_output_corrections(output, [damaged]),
+        )
+
     def test_visible_applicant_correction_outranks_adjacent_name(self):
         pages = [
             page(
