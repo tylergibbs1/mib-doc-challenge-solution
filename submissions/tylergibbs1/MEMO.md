@@ -29,24 +29,36 @@ repairs. Cross-document disagreements are retained as evidence instead of being
 silently overwritten.
 
 The adjudicator is a hybrid of deterministic policy and two small offline
-models. A character n-gram logistic model is robust to recurring OCR damage
-such as `DENIEN`, while an Extra Trees model consumes the resolved structured
-record. Small field classifiers fill non-risk closed-vocabulary fields only
-when the rule extractor is missing or the model is highly confident. Risk flags
-must come from visible evidence and are never inferred from packet
-correlations. Case identifiers are also removed before vectorization. Hard
-guardrails cover visible manual findings, disqualifying risks, revoked
-sponsors, transit classes, stale non-diplomatic packets, and unpaid fees.
-Manual findings are applied first, which prevents an old or crossed-out denial
-from overriding a later signed decision.
+models. A word-and-character TF-IDF logistic model is robust to both policy
+phrases and recurring OCR damage such as `DENIEN`, while an Extra Trees model
+consumes the resolved structured record. Small field classifiers fill non-risk
+closed-vocabulary fields only when the rule extractor is missing or the model
+is highly confident. Risk flags must come from visible evidence and are never
+inferred from packet correlations. Case identifiers are also removed before
+vectorization. Hard guardrails cover visible manual findings, disqualifying
+risks, revoked sponsors, transit classes, stale non-diplomatic packets, and
+unpaid fees. Manual findings are applied first, which prevents an old or
+crossed-out denial from overriding a later signed decision.
+
+Policy-time missingness is separate from the required serialized output. The
+decision and confidence always see an unread fee or visa as unknown. Only
+after they are fixed may fold-validated field models and fold-learned
+categorical priors estimate unresolved output fields. Visible `$809` and
+`DIP-WAIVER` receipt geometry also recover fee status when the status word is
+damaged. None of these output-only estimates can create an approval.
+The output-boundary idea was inspired by the public MIT-licensed
+`OUTPUT_ONLY_FALLBACKS` design in Abhishek Enaguthi's challenge solution;
+`ATTRIBUTION.md` in my solution repository records the source and the
+independent implementation details.
 
 I selected the text/structured blend and decision thresholds using stratified
 five-fold out-of-fold predictions. Model selection maximized the challenge's
 actual asymmetric classification score subject to no more than five
 catastrophic false approvals across the 1,000 public cases. Confidence is not
 the winning class probability. A separate logistic calibrator is trained on
-out-of-fold correctness using model margin, model disagreement, OCR quality,
-missing fields, and guardrail activation.
+out-of-fold correctness using the complete probability vector, predicted
+class, model margin and disagreement, OCR quality, missingness, document mix,
+and explicit guardrail source.
 
 ## Validation discipline and results
 
@@ -55,20 +67,25 @@ or model-selection feedback. The pipeline contains no per-case lookup table and
 does not use filenames for anything beyond the required case ID.
 
 On five-fold out-of-fold public training predictions, the selected policy
-achieved 74.3% adjudication accuracy, 63.26/80 classification points,
-14.99/20 calibration points, and five catastrophic false approvals. Closed
-field extraction is strongest on species (93.3%), home world (89.5%), purpose
-(88.9%), visa class (86.4%), and arrival date (83.6%). The fitted full-data
-smoke evaluation scores 134.94/150 with zero false approvals; I report it only
-as an integration check, not as a generalization estimate.
+achieved 75.6% adjudication accuracy, 64.19/80 classification points,
+15.23/20 calibration points (mean Brier 0.1192), and five catastrophic false
+approvals. Emitted field accuracy is 94.0% species, 90.7% home world, 90.7%
+purpose, 89.0% visa class, 83.6% arrival date, and 82.8% fee status, for
+42.14/50 extraction points. The combined development OOF estimate is
+121.56/150. Because blend and threshold selection use these OOF predictions,
+this is still a development estimate rather than an untouched final audit.
+
+The fitted full-data integration evaluation scores 137.96/150
+(43.42 extraction, 76.63 classification, 17.91 calibration) with zero false
+approvals. I report that only as an end-to-end sanity check, not as evidence of
+generalization.
 
 Tests cover the public evaluator/schema contract, white and off-page text
 rejection, multi-page field resolution, manual-note precedence, and stale
-packet policy. The fitted artifact is about 17 MB and the Docker image is about
-255 MB, both comfortably inside the published limits. A complete 1,000-packet
-exact-contract Docker run took 23 minutes 38 seconds (1.42 seconds per PDF),
-and the final anti-overfit rebuild passed a read-only, network-disabled parity
-smoke without nested parallelism or runtime warnings.
+packet policy. The fitted artifact is about 19 MB and the Docker image is about
+264 MB, both comfortably inside the published limits. The final rebuild passed
+a 20-packet read-only, network-disabled smoke at about 3.2 seconds per PDF
+without nested parallelism or runtime warnings.
 
 ## Known failure modes
 
@@ -81,9 +98,10 @@ smoke without nested parallelism or runtime warnings.
 - Multi-applicant packets remain difficult when the active form's case header
   is itself destroyed. Document precedence helps, but I do not claim perfect
   entity resolution.
-- OCR behavior changes slightly between macOS Tesseract 5.5 and Debian
-  Tesseract 5.3. The final submission is tested inside the exact Docker image,
-  and character n-grams reduce sensitivity to those changes.
+- OCR behavior changes slightly across operating systems even with near-matched
+  Tesseract versions. The final Debian image uses Tesseract 5.5.0, is tested
+  under the exact contract, and character n-grams reduce sensitivity to those
+  changes.
 - The public manual is intentionally incomplete. I inferred only stable,
   repeated sponsor and stale-packet behavior; ambiguous cases are routed to
   review rather than accumulating case-specific exceptions.
@@ -91,8 +109,9 @@ smoke without nested parallelism or runtime warnings.
 ## With another week
 
 I would train inside the final Linux image from the start, add coordinate-aware
-OCR for the fixed form fields, and use nested cross-validation for field-model
-thresholds. I would also add a small image-quality model for illegible
-biometrics, because raster damage is sometimes more informative than OCR text.
-Finally, I would profile fallbacks by damage type and spend the recovered
-runtime on a second OCR pass only where held-out expected value is positive.
+OCR for the fixed form fields, and put blend and field-threshold selection
+inside a fully nested outer audit. I would also add a small image-quality model
+for illegible biometrics, because raster damage is sometimes more informative
+than OCR text. Finally, I would profile fallbacks by damage type and spend the
+recovered runtime on a second OCR pass only where held-out expected value is
+positive.

@@ -21,7 +21,7 @@ def main() -> int:
     parser.add_argument("--cache", type=Path, required=True)
     # This developer-only cache builder may use additional host cores. The
     # submitted runtime remains capped at four workers in solution.predict.
-    parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
+    parser.add_argument("--workers", type=int, default=min(10, os.cpu_count() or 1))
     args = parser.parse_args()
     with args.manifest.open(newline="", encoding="utf-8") as handle:
         case_ids = [row["case_id"] for row in csv.DictReader(handle)]
@@ -29,7 +29,7 @@ def main() -> int:
         args.input_dir,
         args.cache,
         case_ids,
-        max(1, min(8, args.workers)),
+        max(1, min(10, args.workers)),
     )
     print(f"Cached visible evidence for {len(evidence)} cases at {args.cache}")
     return 0

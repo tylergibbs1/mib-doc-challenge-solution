@@ -21,14 +21,21 @@ No LLM, VLM, cloud OCR, API key, or runtime network access is used.
    follow the manual's document precedence, including explicit correction
    notes. Cross-document conflicts become risk evidence. Outcome-determinative
    risk flags are never imputed when their visible evidence is absent.
-4. **Hybrid prediction.** A character n-gram text model handles damaged words
-   and layout variants, while an Extra Trees model handles the extracted
-   structured record. A held-out blend is wrapped in deterministic guardrails
-   for manual findings, disqualifying flags, revoked sponsors, transit cases,
-   and unpaid fees. Packet identifiers are removed before vectorization.
+4. **Hybrid prediction.** Word and character TF-IDF features handle policy
+   phrases, damaged words, and layout variants, while an Extra Trees model
+   handles the extracted structured record. A held-out blend is wrapped in
+   deterministic guardrails for manual findings, disqualifying flags, revoked
+   sponsors, transit cases, and unpaid fees. Packet identifiers are removed
+   before vectorization.
 5. **Calibrated uncertainty.** A second-stage logistic model predicts whether
-   the chosen adjudication is correct using out-of-fold model margin,
-   disagreement, OCR quality, missing fields, and guardrail activation.
+   the chosen adjudication is correct using out-of-fold class probabilities,
+   model margin and disagreement, OCR quality, missing fields, document mix,
+   predicted class, and guardrail source.
+6. **Policy/output separation.** Risk flags and missing policy evidence are
+   never imputed for adjudication. After the decision and confidence are fixed,
+   fold-validated field classifiers and categorical priors may fill required
+   output fields. This improves extraction without turning an estimated field
+   into fabricated approval evidence.
 
 ## Research grounding
 

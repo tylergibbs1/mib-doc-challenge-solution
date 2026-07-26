@@ -19,7 +19,7 @@ def build_prediction(evidence: dict, engine: DecisionEngine) -> dict:
     record = extract_fields(evidence["case_id"], evidence["pages"])
     record = engine.correct_record(record, evidence["pages"])
     decision = engine.decide(record, evidence["pages"])
-    prediction = record.output_fields()
+    prediction = engine.output_fields(record, evidence["pages"])
     prediction["adjudication"] = decision.adjudication
     prediction["confidence"] = decision.confidence
     return prediction
@@ -48,7 +48,9 @@ def main() -> int:
     parser.add_argument("output_path", type=Path)
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
     args = parser.parse_args()
-    count = predict_directory(args.input_dir, args.output_path, max(1, min(4, args.workers)))
+    count = predict_directory(
+        args.input_dir, args.output_path, max(1, min(4, args.workers))
+    )
     print(f"Wrote {count} predictions to {args.output_path}")
     return 0
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pymupdf
 
-from solution.decision import DecisionEngine, visible_text
+from solution.decision import DecisionEngine, evidence_policy, visible_text
 from solution.fields import extract_fields
 from solution.pdf import PageEvidence, _tsv_to_text, visible_native_text
 
@@ -67,6 +67,47 @@ class VisibleEvidenceTests(unittest.TestCase):
 
 
 class FieldResolutionTests(unittest.TestCase):
+    def test_complete_visible_policy_evidence_approves(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\n"
+                "Species Code: ORION_GRAYS\n"
+                "Home World: Kepler-186f\n"
+                "Visa Class: XW-2\n"
+                "Sponsor ID: SPN-1042\n"
+                "Arrival Date: 2026-04-17\n"
+                "Declared Purpose: research",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(evidence_policy(record, pages)[0], "APPROVED")
+
+    def test_unknown_fee_routes_to_review(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\nArrival Date: 2026-04-17",
+                "intake",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(evidence_policy(record, pages)[0], "NEEDS_REVIEW")
+
+    def test_output_prior_does_not_change_missing_policy_evidence(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\nArrival Date: 2026-04-17",
+                "intake",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        output = record.output_fields({"fee_status": "paid"})
+        self.assertEqual(output["fee_status"], "paid")
+        self.assertEqual(record.fee_status, "unknown")
+        self.assertIn("fee_status", record.missing_fields)
+        self.assertEqual(evidence_policy(record, pages)[0], "NEEDS_REVIEW")
+
     def test_recovers_visible_ocr_damage_in_fee_and_risk(self):
         pages = [
             page("Biometric Inspection\nObserved flags: biohazerd_red", "biometric"),
@@ -75,6 +116,18 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         self.assertEqual(record.risk_flags, "biohazard_red")
         self.assertEqual(record.fee_status, "waived")
+
+    def test_recovers_fee_from_visible_receipt_amount_and_waiver_code(self):
+        paid = extract_fields(
+            "MIB-999998",
+            [page("MIB Fee Receipt\nAmount $809.00\nWaiver Code N/A", "fee")],
+        )
+        waived = extract_fields(
+            "MIB-999999",
+            [page("MIB Fee Receipt\nAmount $0.00\nDIP-WAIVER", "fee")],
+        )
+        self.assertEqual(paid.fee_status, "paid")
+        self.assertEqual(waived.fee_status, "waived")
 
     def test_extracts_clean_multi_page_packet(self):
         pages = [
@@ -121,7 +174,9 @@ class FieldResolutionTests(unittest.TestCase):
             ),
         ]
         record = extract_fields("MIB-999999", pages)
-        decision = DecisionEngine(model_path=Path("/does/not/exist")).decide(record, pages)
+        decision = DecisionEngine(model_path=Path("/does/not/exist")).decide(
+            record, pages
+        )
         self.assertEqual(decision.adjudication, "DENIED")
         self.assertEqual(decision.source, "visible_manual_finding")
 
@@ -140,7 +195,9 @@ class FieldResolutionTests(unittest.TestCase):
             page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
         ]
         record = extract_fields("MIB-999999", pages)
-        decision = DecisionEngine(model_path=Path("/does/not/exist")).decide(record, pages)
+        decision = DecisionEngine(model_path=Path("/does/not/exist")).decide(
+            record, pages
+        )
         self.assertEqual(decision.adjudication, "DENIED")
         self.assertEqual(decision.source, "stale_non_diplomatic_packet")
 

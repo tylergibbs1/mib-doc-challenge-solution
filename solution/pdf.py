@@ -201,8 +201,12 @@ def _ocr(gray: np.ndarray, psm: int = 11) -> tuple[str, float]:
 
 
 def render_and_ocr(page: pymupdf.Page, dpi: int = 220) -> tuple[str, float]:
-    pixmap = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csGRAY, alpha=False, annots=True)
-    gray = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width)
+    pixmap = page.get_pixmap(
+        dpi=dpi, colorspace=pymupdf.csGRAY, alpha=False, annots=True
+    )
+    gray = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(
+        pixmap.height, pixmap.width
+    )
     text, confidence = _ocr(gray, psm=11)
     best = (text, confidence)
     # Targeted retries help faded pages and forms whose rules intersect glyphs,
@@ -268,9 +272,15 @@ def classify_document(text: str) -> str:
         return "intake"
     if "BIOMETRIC" in normalized or "BIOHAZARD" in normalized:
         return "biometric"
-    if "FEE RECEIPT" in normalized or ("FEE STATUS" in normalized and "AMOUNT" in normalized):
+    if "FEE RECEIPT" in normalized or (
+        "FEE STATUS" in normalized and "AMOUNT" in normalized
+    ):
         return "fee"
-    if "SPONSOR ATTESTATION" in normalized or "SPONSOR" in normalized and "ATTESTS" in normalized:
+    if (
+        "SPONSOR ATTESTATION" in normalized
+        or "SPONSOR" in normalized
+        and "ATTESTS" in normalized
+    ):
         return "sponsor"
     if "REGISTRY EXTRACT" in normalized or "REGISTRY STATUS" in normalized:
         return "registry"
@@ -289,9 +299,9 @@ def extract_pdf(pdf_path: str | Path, dpi: int = 220) -> dict:
                     alternate_text, alternate_confidence = poppler_ocr(
                         pdf_path, page_index + 1, dpi=dpi
                     )
-                    if _ocr_quality(alternate_text, alternate_confidence) > _ocr_quality(
-                        ocr_text, ocr_confidence
-                    ):
+                    if _ocr_quality(
+                        alternate_text, alternate_confidence
+                    ) > _ocr_quality(ocr_text, ocr_confidence):
                         ocr_text, ocr_confidence = alternate_text, alternate_confidence
             except (subprocess.SubprocessError, ValueError, RuntimeError):
                 ocr_text, ocr_confidence = "", 0.0

@@ -18,6 +18,26 @@ from .constants import (
 from .fields import Extraction, normalized
 from .pdf import PageEvidence
 
+CONFIDENCE_GUARDRAIL_SOURCES = (
+    "none",
+    "visible_manual_finding",
+    "disqualifying_risk",
+    "revoked_sponsor",
+    "transit_class",
+    "stale_non_diplomatic_packet",
+    "unpaid_fee",
+    "combined_review_flags",
+)
+CONFIDENCE_DOCUMENT_TYPES = (
+    "manual",
+    "intake",
+    "biometric",
+    "fee",
+    "sponsor",
+    "registry",
+    "unknown",
+)
+
 
 @dataclass
 class Decision:
@@ -103,8 +123,38 @@ def deterministic_guardrail(
     return None
 
 
+def evidence_policy(
+    record: Extraction, pages: list[PageEvidence]
+) -> tuple[str, float, str]:
+    guardrail = deterministic_guardrail(record, pages)
+    if guardrail:
+        return guardrail
+
+    flags = _flags(record)
+    text = normalized(visible_text(pages))
+    if flags & REVIEW_FLAGS:
+        return "NEEDS_REVIEW", 0.88, "visible_review_risk"
+    if record.fee_status == "unknown":
+        return "NEEDS_REVIEW", 0.86, "unknown_fee"
+    waiver_visible = "HARDSHIP WAIVER" in text or "WAIVER APPROVED" in text
+    if (
+        record.fee_status == "waived"
+        and record.visa_class != "DIP-1"
+        and not waiver_visible
+    ):
+        return "NEEDS_REVIEW", 0.84, "unsupported_fee_waiver"
+    core_missing = {"visa_class", "arrival_date"}
+    if record.visa_class != "DIP-1":
+        core_missing.add("sponsor_id")
+    if core_missing & set(record.missing_fields):
+        return "NEEDS_REVIEW", 0.82, "missing_policy_evidence"
+    return "APPROVED", 0.88, "complete_policy_evidence"
+
+
 def expected_utility_label(probabilities: np.ndarray, classes: list[str]) -> str:
-    probability = {label: float(probabilities[index]) for index, label in enumerate(classes)}
+    probability = {
+        label: float(probabilities[index]) for index, label in enumerate(classes)
+    }
     approved = (
         8.0 * probability["APPROVED"]
         - 4.0 * probability["DENIED"]
@@ -130,11 +180,12 @@ def threshold_policy_label(
     classes: list[str],
     policy: dict[str, float],
 ) -> str:
-    probability = {label: float(probabilities[index]) for index, label in enumerate(classes)}
+    probability = {
+        label: float(probabilities[index]) for index, label in enumerate(classes)
+    }
     if (
         probability["APPROVED"] >= policy["approve_threshold"]
-        and probability["APPROVED"] - probability["DENIED"]
-        >= policy["approve_margin"]
+        and probability["APPROVED"] - probability["DENIED"] >= policy["approve_margin"]
     ):
         return "APPROVED"
     if probability["DENIED"] >= policy["deny_threshold"]:
@@ -142,9 +193,54 @@ def threshold_policy_label(
     return "NEEDS_REVIEW"
 
 
+def confidence_feature_row(
+    probabilities: np.ndarray,
+    adjudication: str,
+    raw_confidence: float,
+    disagreement: float,
+    record: Extraction,
+    pages: list[PageEvidence],
+    guardrail: tuple[str, float, str] | None,
+    classes: list[str],
+) -> np.ndarray:
+    """Build leakage-safe confidence features shared by training and inference."""
+    ordered = np.sort(probabilities)
+    margin = float(ordered[-1] - ordered[-2])
+    predicted_one_hot = [float(adjudication == label) for label in classes]
+    guardrail_source = guardrail[2] if guardrail else "none"
+    guardrail_one_hot = [
+        float(guardrail_source == source) for source in CONFIDENCE_GUARDRAIL_SOURCES
+    ]
+    page_count = max(1, len(pages))
+    document_mix = [
+        sum(page.document_type == document_type for page in pages) / page_count
+        for document_type in CONFIDENCE_DOCUMENT_TYPES
+    ]
+    return np.asarray(
+        [
+            raw_confidence,
+            margin,
+            disagreement,
+            len(record.missing_fields) / 8.0,
+            record.evidence_quality,
+            record.mean_ocr_confidence / 100.0,
+            float(guardrail is not None),
+            *[float(value) for value in probabilities],
+            *predicted_one_hot,
+            *guardrail_one_hot,
+            *document_mix,
+        ],
+        dtype=np.float64,
+    )
+
+
 class DecisionEngine:
     def __init__(self, model_path: str | Path | None = None):
-        path = Path(model_path) if model_path else Path(__file__).parents[1] / "models" / "model.joblib"
+        path = (
+            Path(model_path)
+            if model_path
+            else Path(__file__).parents[1] / "models" / "model.joblib"
+        )
         self.bundle = joblib.load(path) if path.exists() else None
 
     @staticmethod
@@ -171,13 +267,28 @@ class DecisionEngine:
         structured_model = self.bundle["structured_model"]
         classes = list(self.bundle["classes"])
         text_prob = text_model.predict_proba([visible_text(pages)])[0]
-        structured_prob = structured_model.predict_proba([self._structured_row(record)])[0]
-        text_prob = np.array([text_prob[list(text_model.classes_).index(c)] for c in classes])
+        structured_prob = structured_model.predict_proba(
+            [self._structured_row(record)]
+        )[0]
+        text_prob = np.array(
+            [text_prob[list(text_model.classes_).index(c)] for c in classes]
+        )
         structured_prob = np.array(
             [structured_prob[list(structured_model.classes_).index(c)] for c in classes]
         )
         weight = float(self.bundle.get("text_weight", 0.65))
         probability = weight * text_prob + (1.0 - weight) * structured_prob
+        policy_weight = float(
+            self.bundle.get("decision_policy", {}).get("policy_weight", 0.0)
+        )
+        if policy_weight:
+            policy_label = evidence_policy(record, pages)[0]
+            policy_probability = np.array(
+                [float(label == policy_label) for label in classes]
+            )
+            probability = (
+                1.0 - policy_weight
+            ) * probability + policy_weight * policy_probability
         disagreement = float(np.abs(text_prob - structured_prob).sum() / 2.0)
         return probability, disagreement
 
@@ -201,7 +312,9 @@ class DecisionEngine:
             for token in record.applicant_name.split():
                 score, candidate = max(
                     (
-                        SequenceMatcher(None, token.casefold(), known.casefold()).ratio(),
+                        SequenceMatcher(
+                            None, token.casefold(), known.casefold()
+                        ).ratio(),
                         known,
                     )
                     for known in name_tokens
@@ -248,7 +361,8 @@ class DecisionEngine:
                 "visa_class",
                 "declared_purpose",
             }:
-                continue
+                if value != current and confidence >= thresholds[field]:
+                    updates[field] = value
             elif value != current and confidence >= thresholds[field]:
                 updates[field] = value
         if not updates:
@@ -271,7 +385,39 @@ class DecisionEngine:
         )
         return replace(updated, missing_fields=missing_fields)
 
-    def decide(self, record: Extraction, raw_pages: list[dict] | list[PageEvidence]) -> Decision:
+    def output_fields(
+        self, record: Extraction, raw_pages: list[dict] | list[PageEvidence]
+    ) -> dict:
+        """Apply extraction-only estimates after policy and confidence are fixed."""
+        output_fallbacks = (
+            self.bundle.get("output_fallbacks", {}) if self.bundle else {}
+        )
+        output = record.output_fields(output_fallbacks)
+        if (
+            not self.bundle
+            or not self.bundle.get("field_models")
+            or not self.bundle.get("output_field_thresholds")
+        ):
+            return output
+        pages = [
+            page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
+            for page in raw_pages
+        ]
+        vectorizer = self.bundle["text_model"].steps[0][1]
+        matrix = vectorizer.transform([visible_text(pages)])
+        for field, threshold in self.bundle["output_field_thresholds"].items():
+            if float(threshold) >= 1.0:
+                continue
+            model = self.bundle["field_models"][field]
+            probabilities = model.predict_proba(matrix)[0]
+            index = int(np.argmax(probabilities))
+            if float(probabilities[index]) >= float(threshold):
+                output[field] = str(model.classes_[index])
+        return output
+
+    def decide(
+        self, record: Extraction, raw_pages: list[dict] | list[PageEvidence]
+    ) -> Decision:
         pages = [
             page if isinstance(page, PageEvidence) else PageEvidence.from_dict(page)
             for page in raw_pages
@@ -279,7 +425,9 @@ class DecisionEngine:
         guardrail = deterministic_guardrail(record, pages)
         probabilities, disagreement = self._model_probabilities(record, pages)
         classes = list(self.bundle["classes"]) if self.bundle else list(ADJUDICATIONS)
-        probability_map = {label: float(probabilities[index]) for index, label in enumerate(classes)}
+        probability_map = {
+            label: float(probabilities[index]) for index, label in enumerate(classes)
+        }
 
         if guardrail:
             adjudication, confidence, source = guardrail
@@ -295,19 +443,20 @@ class DecisionEngine:
             confidence = probability_map[adjudication]
             source = "cost_sensitive_hybrid"
 
-        ordered = np.sort(probabilities)
-        margin = float(ordered[-1] - ordered[-2])
         if self.bundle and "confidence_model" in self.bundle:
-            features = [[
+            features = confidence_feature_row(
+                probabilities,
+                adjudication,
                 confidence,
-                margin,
                 disagreement,
-                len(record.missing_fields),
-                record.evidence_quality,
-                record.mean_ocr_confidence / 100.0,
-                1.0 if guardrail else 0.0,
-            ]]
-            confidence = float(self.bundle["confidence_model"].predict_proba(features)[0, 1])
+                record,
+                pages,
+                guardrail,
+                classes,
+            ).reshape(1, -1)
+            confidence = float(
+                self.bundle["confidence_model"].predict_proba(features)[0, 1]
+            )
         else:
             confidence *= 1.0 - min(0.22, 0.12 * disagreement)
             confidence *= 0.88 + 0.12 * record.evidence_quality

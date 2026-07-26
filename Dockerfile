@@ -1,4 +1,4 @@
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-trixie
 
 ENV DEBIAN_FRONTEND=noninteractive \
     OMP_THREAD_LIMIT=1 \

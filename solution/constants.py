@@ -76,7 +76,12 @@ DISQUALIFYING_FLAGS = frozenset(
     {"active_warrant", "biohazard_red", "memory_tampering", "planetary_embargo"}
 )
 REVIEW_FLAGS = frozenset(
-    {"identity_conflict", "illegible_biometrics", "rescinded_denial", "sponsor_mismatch"}
+    {
+        "identity_conflict",
+        "illegible_biometrics",
+        "rescinded_denial",
+        "sponsor_mismatch",
+    }
 )
 
 # Three are public policy. The latter three are consistently revoked in every

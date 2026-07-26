@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -15,13 +16,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import FeatureUnion, make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from .constants import ADJUDICATIONS
 from .decision import (
     DecisionEngine,
+    confidence_feature_row,
     deterministic_guardrail,
+    evidence_policy,
     threshold_policy_label,
     visible_text,
 )
@@ -29,6 +32,17 @@ from .fields import Extraction, extract_fields
 from .pdf import PageEvidence, safe_extract_pdf
 
 CLASSES = np.array(ADJUDICATIONS)
+FIELD_WEIGHTS = {
+    "applicant_name": 5,
+    "species_code": 6,
+    "home_world": 5,
+    "visa_class": 5,
+    "sponsor_id": 5,
+    "arrival_date": 4,
+    "declared_purpose": 3,
+    "risk_flags": 8,
+    "fee_status": 4,
+}
 STRUCTURED_FIELDS = (
     "species_code",
     "home_world",
@@ -39,6 +53,13 @@ STRUCTURED_FIELDS = (
     "fee_status",
 )
 FIELD_MODEL_FIELDS = (
+    "species_code",
+    "home_world",
+    "visa_class",
+    "declared_purpose",
+    "fee_status",
+)
+OUTPUT_PRIOR_FIELDS = (
     "species_code",
     "home_world",
     "visa_class",
@@ -68,12 +89,17 @@ def load_cache(path: Path) -> dict[str, dict]:
     return cached
 
 
-def build_cache(input_dir: Path, cache_path: Path, case_ids: list[str], workers: int) -> list[dict]:
+def build_cache(
+    input_dir: Path, cache_path: Path, case_ids: list[str], workers: int
+) -> list[dict]:
     cached = load_cache(cache_path)
     missing = [case_id for case_id in case_ids if case_id not in cached]
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     if missing:
-        print(f"Extracting {len(missing)} uncached PDFs with {workers} workers", flush=True)
+        print(
+            f"Extracting {len(missing)} uncached PDFs with {workers} workers",
+            flush=True,
+        )
         paths = [input_dir / f"{case_id}.pdf" for case_id in missing]
         with (
             cache_path.open("a", encoding="utf-8") as output,
@@ -101,16 +127,38 @@ def structured_row(record: Extraction) -> list:
 
 def make_text_model() -> object:
     return make_pipeline(
-        TfidfVectorizer(
-            analyzer="char",
-            ngram_range=(3, 5),
-            min_df=2,
-            max_df=0.995,
-            max_features=65_000,
-            lowercase=True,
-            strip_accents="unicode",
-            sublinear_tf=True,
-            dtype=np.float32,
+        FeatureUnion(
+            [
+                (
+                    "char",
+                    TfidfVectorizer(
+                        analyzer="char",
+                        ngram_range=(3, 5),
+                        min_df=2,
+                        max_df=0.995,
+                        max_features=65_000,
+                        lowercase=True,
+                        strip_accents="unicode",
+                        sublinear_tf=True,
+                        dtype=np.float32,
+                    ),
+                ),
+                (
+                    "word",
+                    TfidfVectorizer(
+                        analyzer="word",
+                        ngram_range=(1, 2),
+                        min_df=2,
+                        max_df=0.995,
+                        max_features=35_000,
+                        lowercase=True,
+                        strip_accents="unicode",
+                        sublinear_tf=True,
+                        dtype=np.float32,
+                    ),
+                ),
+            ],
+            transformer_weights={"char": 1.0, "word": 0.7},
         ),
         LogisticRegression(C=3.0, max_iter=2500, random_state=8090),
     )
@@ -147,7 +195,9 @@ def aligned_probabilities(model: object, x, classes: np.ndarray) -> np.ndarray:
     )
 
 
-def competition_scores(y: np.ndarray, prediction: np.ndarray, confidence: np.ndarray) -> dict:
+def competition_scores(
+    y: np.ndarray, prediction: np.ndarray, confidence: np.ndarray
+) -> dict:
     correct = prediction == y
     catastrophic = (y == "DENIED") & (prediction == "APPROVED")
     conservative = (prediction == "NEEDS_REVIEW") & ~correct
@@ -175,7 +225,12 @@ def competition_scores(y: np.ndarray, prediction: np.ndarray, confidence: np.nda
     }
 
 
-def field_accuracy(labels: list[dict[str, str]], records: list[Extraction]) -> dict[str, float]:
+def field_accuracy(
+    labels: list[dict[str, str]],
+    records: list[Extraction],
+    output_fallbacks: list[dict[str, str]] | None = None,
+    output_overrides: list[dict[str, str]] | None = None,
+) -> dict[str, float]:
     fields = (
         "applicant_name",
         "species_code",
@@ -187,17 +242,76 @@ def field_accuracy(labels: list[dict[str, str]], records: list[Extraction]) -> d
         "risk_flags",
         "fee_status",
     )
+    if output_fallbacks is None:
+        output_fallbacks = [{} for _ in records]
+    if output_overrides is None:
+        output_overrides = [{} for _ in records]
+    output_rows = [
+        record.output_fields(fallbacks) | overrides
+        for record, fallbacks, overrides in zip(
+            records, output_fallbacks, output_overrides
+        )
+    ]
     return {
         field: sum(
-            getattr(record, field).strip().casefold() == truth[field].strip().casefold()
-            for truth, record in zip(labels, records)
+            output[field].strip().casefold() == truth[field].strip().casefold()
+            for truth, output in zip(labels, output_rows)
         )
         / len(records)
         for field in fields
     }
 
 
-def fit_field_models(text_model: object, texts: np.ndarray, labels: list[dict[str, str]]):
+def competition_extraction_score(
+    labels: list[dict[str, str]],
+    records: list[Extraction],
+    output_fallbacks: list[dict[str, str]] | None = None,
+    output_overrides: list[dict[str, str]] | None = None,
+) -> float:
+    earned = 0
+    available = 0
+    if output_fallbacks is None:
+        output_fallbacks = [{} for _ in records]
+    if output_overrides is None:
+        output_overrides = [{} for _ in records]
+    for truth, record, fallbacks, overrides in zip(
+        labels, records, output_fallbacks, output_overrides
+    ):
+        output = record.output_fields(fallbacks) | overrides
+        unrecoverable = {
+            field.strip()
+            for field in truth.get("unrecoverable_fields", "").split("|")
+            if field.strip()
+        }
+        for field, weight in FIELD_WEIGHTS.items():
+            if field in unrecoverable:
+                continue
+            available += weight
+            predicted = output[field].strip().casefold()
+            expected = truth[field].strip().casefold()
+            if field == "risk_flags":
+                predicted = "|".join(sorted(predicted.split("|")))
+                expected = "|".join(sorted(expected.split("|")))
+            if predicted == expected:
+                earned += weight
+    return 50.0 * earned / available
+
+
+def learn_output_fallbacks(labels: list[dict[str, str]]) -> dict[str, str]:
+    """Learn identity-free categorical priors for unresolved output fields."""
+    fallbacks: dict[str, str] = {}
+    for field in OUTPUT_PRIOR_FIELDS:
+        counts = Counter(row[field] for row in labels)
+        fallbacks[field] = min(
+            counts,
+            key=lambda value: (-counts[value], value),
+        )
+    return fallbacks
+
+
+def fit_field_models(
+    text_model: object, texts: np.ndarray, labels: list[dict[str, str]]
+):
     vectorizer = text_model.steps[0][1]
     matrix = vectorizer.transform(texts)
     models = {}
@@ -232,15 +346,17 @@ def train(
     report_path: Path,
 ) -> dict:
     pages = [
-        [PageEvidence.from_dict(page) for page in item["pages"]]
-        for item in evidence
+        [PageEvidence.from_dict(page) for page in item["pages"]] for item in evidence
     ]
-    records = [
-        extract_fields(item["case_id"], item["pages"])
-        for item in evidence
-    ]
+    records = [extract_fields(item["case_id"], item["pages"]) for item in evidence]
     texts = np.array([visible_text(case_pages) for case_pages in pages], dtype=object)
     y = np.array([row["adjudication"] for row in label_rows])
+    raw_guardrail_weight = np.array(
+        [
+            0.25 if deterministic_guardrail(record, case_pages) else 1.0
+            for record, case_pages in zip(records, pages)
+        ]
+    )
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=8090)
 
     text_model = make_text_model()
@@ -248,25 +364,62 @@ def train(
     text_prob = np.zeros((len(y), len(CLASSES)), dtype=float)
     structured_prob = np.zeros_like(text_prob)
     oof_records: list[Extraction | None] = [None] * len(y)
-    print("Generating leakage-safe out-of-fold field and adjudication predictions", flush=True)
-    for fold, (train_indices, validation_indices) in enumerate(cv.split(texts, y), start=1):
+    oof_output_fallbacks: list[dict[str, str] | None] = [None] * len(y)
+    field_oof_values = {
+        field: np.empty(len(y), dtype=object) for field in FIELD_MODEL_FIELDS
+    }
+    field_oof_confidence = {
+        field: np.zeros(len(y), dtype=float) for field in FIELD_MODEL_FIELDS
+    }
+    print(
+        "Generating leakage-safe out-of-fold field and adjudication predictions",
+        flush=True,
+    )
+    for fold, (train_indices, validation_indices) in enumerate(
+        cv.split(texts, y), start=1
+    ):
         fold_text_model = make_text_model()
-        fold_text_model.fit(texts[train_indices], y[train_indices])
+        fold_text_model.fit(
+            texts[train_indices],
+            y[train_indices],
+            logisticregression__sample_weight=raw_guardrail_weight[train_indices],
+        )
         train_labels = [label_rows[index] for index in train_indices]
+        fold_output_fallbacks = learn_output_fallbacks(train_labels)
         fold_field_models = fit_field_models(
             fold_text_model, texts[train_indices], train_labels
         )
+        validation_matrix = fold_text_model.steps[0][1].transform(
+            texts[validation_indices]
+        )
+        for field, model in fold_field_models.items():
+            field_probability = model.predict_proba(validation_matrix)
+            best_indices = np.argmax(field_probability, axis=1)
+            field_oof_values[field][validation_indices] = model.classes_[best_indices]
+            field_oof_confidence[field][validation_indices] = field_probability[
+                np.arange(len(validation_indices)), best_indices
+            ]
         engine = correction_engine(fold_text_model, fold_field_models, train_labels)
         corrected_train = [
-            engine.correct_record(records[index], pages[index]) for index in train_indices
+            engine.correct_record(records[index], pages[index])
+            for index in train_indices
         ]
         corrected_validation = [
-            engine.correct_record(records[index], pages[index]) for index in validation_indices
+            engine.correct_record(records[index], pages[index])
+            for index in validation_indices
         ]
         fold_structured_model = make_structured_model()
         fold_structured_model.fit(
-            np.array([structured_row(record) for record in corrected_train], dtype=object),
+            np.array(
+                [structured_row(record) for record in corrected_train], dtype=object
+            ),
             y[train_indices],
+            extratreesclassifier__sample_weight=np.array(
+                [
+                    0.25 if deterministic_guardrail(record, pages[index]) else 1.0
+                    for record, index in zip(corrected_train, train_indices)
+                ]
+            ),
         )
         text_raw = fold_text_model.predict_proba(texts[validation_indices])
         text_prob[validation_indices] = np.column_stack(
@@ -289,15 +442,119 @@ def train(
         )
         for index, record in zip(validation_indices, corrected_validation):
             oof_records[index] = record
+            oof_output_fallbacks[index] = fold_output_fallbacks
         print(f"  completed fold {fold}/5", flush=True)
     corrected_records = [record for record in oof_records if record is not None]
     if len(corrected_records) != len(records):
         raise RuntimeError("Out-of-fold correction did not cover every training case")
+    output_fallbacks = [
+        fallbacks for fallbacks in oof_output_fallbacks if fallbacks is not None
+    ]
+    if len(output_fallbacks) != len(records):
+        raise RuntimeError(
+            "Out-of-fold output priors did not cover every training case"
+        )
 
     guardrails = [
         deterministic_guardrail(record, case_pages)
         for record, case_pages in zip(corrected_records, pages)
     ]
+    policy_predictions = np.array(
+        [
+            evidence_policy(record, case_pages)[0]
+            for record, case_pages in zip(corrected_records, pages)
+        ]
+    )
+    policy_probability = np.column_stack(
+        [(policy_predictions == label).astype(float) for label in CLASSES]
+    )
+    field_model_diagnostics = {}
+    output_field_thresholds = {}
+    output_overrides: list[dict[str, str]] = [{} for _ in corrected_records]
+    for field in FIELD_MODEL_FIELDS:
+        truth_values = np.array([row[field] for row in label_rows], dtype=object)
+        raw_values = np.array(
+            [getattr(record, field) for record in records], dtype=object
+        )
+        recoverable = np.array(
+            [
+                field
+                not in {
+                    value.strip()
+                    for value in row.get("unrecoverable_fields", "").split("|")
+                    if value.strip()
+                }
+                for row in label_rows
+            ]
+        )
+        best_threshold = 1.0
+        best_accuracy = float(
+            (raw_values[recoverable] == truth_values[recoverable]).mean()
+        )
+        for threshold in np.linspace(0.3, 0.99, 70):
+            corrected = np.where(
+                field_oof_confidence[field] >= threshold,
+                field_oof_values[field],
+                raw_values,
+            )
+            accuracy = float(
+                (corrected[recoverable] == truth_values[recoverable]).mean()
+            )
+            if accuracy > best_accuracy or (
+                accuracy == best_accuracy and threshold > best_threshold
+            ):
+                best_accuracy = accuracy
+                best_threshold = float(threshold)
+        field_model_diagnostics[field] = {
+            "raw_recoverable_accuracy": float(
+                (raw_values[recoverable] == truth_values[recoverable]).mean()
+            ),
+            "model_recoverable_accuracy": float(
+                (
+                    field_oof_values[field][recoverable] == truth_values[recoverable]
+                ).mean()
+            ),
+            "best_replacement_threshold": best_threshold,
+            "best_recoverable_accuracy": best_accuracy,
+        }
+        emitted_values = np.array(
+            [
+                record.output_fields(fallbacks)[field]
+                for record, fallbacks in zip(corrected_records, output_fallbacks)
+            ],
+            dtype=object,
+        )
+        output_threshold = 1.0
+        output_accuracy = float((emitted_values == truth_values).mean())
+        for threshold in np.linspace(0.3, 0.99, 70):
+            output_values = np.where(
+                field_oof_confidence[field] >= threshold,
+                field_oof_values[field],
+                emitted_values,
+            )
+            accuracy = float((output_values == truth_values).mean())
+            if accuracy > output_accuracy or (
+                accuracy == output_accuracy and threshold > output_threshold
+            ):
+                output_accuracy = accuracy
+                output_threshold = float(threshold)
+        output_field_thresholds[field] = output_threshold
+        field_model_diagnostics[field].update(
+            {
+                "emitted_accuracy_before_output_model": float(
+                    (emitted_values == truth_values).mean()
+                ),
+                "output_replacement_threshold": output_threshold,
+                "emitted_accuracy_after_output_model": output_accuracy,
+            }
+        )
+        replace_mask = (
+            field_oof_confidence[field] >= output_threshold
+            if output_threshold < 1.0
+            else np.zeros(len(corrected_records), dtype=bool)
+        )
+        for index in np.flatnonzero(replace_mask):
+            output_overrides[index][field] = str(field_oof_values[field][index])
     best: (
         tuple[
             float,
@@ -306,62 +563,78 @@ def train(
             np.ndarray,
             np.ndarray,
             np.ndarray,
+            dict[str, float],
         ]
         | None
     ) = None
+    best_unconstrained = None
     for text_weight in np.linspace(0.35, 0.9, 12):
-        probability = text_weight * text_prob + (1.0 - text_weight) * structured_prob
-        for approve_threshold in np.arange(0.3, 0.96, 0.05):
-            for approve_margin in np.arange(0.0, 0.61, 0.05):
-                for deny_threshold in np.arange(0.3, 0.71, 0.05):
-                    policy = {
-                        "approve_threshold": float(approve_threshold),
-                        "approve_margin": float(approve_margin),
-                        "deny_threshold": float(deny_threshold),
-                    }
-                    predicted = np.array(
-                        [
-                            threshold_policy_label(
-                                case_probability, list(CLASSES), policy
-                            )
-                            for case_probability in probability
-                        ]
-                    )
-                    guardrail_mask = np.zeros(len(y), dtype=bool)
-                    raw_confidence = np.array(
-                        [
-                            case_probability[list(CLASSES).index(label)]
-                            for case_probability, label in zip(probability, predicted)
-                        ]
-                    )
-                    for index, guardrail in enumerate(guardrails):
-                        if guardrail:
-                            label, confidence, _ = guardrail
-                            predicted[index] = label
-                            guardrail_mask[index] = True
-                            support = probability[index, list(CLASSES).index(label)]
-                            raw_confidence[index] = 0.75 * confidence + 0.25 * support
-                    baseline = competition_scores(y, predicted, raw_confidence)
-                    catastrophic = baseline["catastrophic_false_approvals"]
-                    objective = (
-                        baseline["classification_score"]
-                        if catastrophic <= 5
-                        else baseline["classification_score"] - 100.0 - catastrophic
-                    )
-                    if best is None or objective > best[0]:
-                        best = (
-                            objective,
+        base_probability = (
+            text_weight * text_prob + (1.0 - text_weight) * structured_prob
+        )
+        for policy_weight in np.arange(0.0, 0.26, 0.05):
+            probability = (
+                1.0 - policy_weight
+            ) * base_probability + policy_weight * policy_probability
+            for approve_threshold in np.arange(0.4, 0.71, 0.05):
+                for approve_margin in np.arange(0.0, 0.41, 0.05):
+                    for deny_threshold in np.arange(0.45, 0.66, 0.05):
+                        policy = {
+                            "approve_threshold": float(approve_threshold),
+                            "approve_margin": float(approve_margin),
+                            "deny_threshold": float(deny_threshold),
+                            "policy_weight": float(policy_weight),
+                        }
+                        predicted = np.array(
+                            [
+                                threshold_policy_label(
+                                    case_probability, list(CLASSES), policy
+                                )
+                                for case_probability in probability
+                            ]
+                        )
+                        guardrail_mask = np.zeros(len(y), dtype=bool)
+                        raw_confidence = np.array(
+                            [
+                                case_probability[list(CLASSES).index(label)]
+                                for case_probability, label in zip(
+                                    probability, predicted
+                                )
+                            ]
+                        )
+                        for index, guardrail in enumerate(guardrails):
+                            if guardrail:
+                                label, confidence, _ = guardrail
+                                predicted[index] = label
+                                guardrail_mask[index] = True
+                                support = probability[index, list(CLASSES).index(label)]
+                                raw_confidence[index] = (
+                                    0.75 * confidence + 0.25 * support
+                                )
+                        baseline = competition_scores(y, predicted, raw_confidence)
+                        catastrophic = baseline["catastrophic_false_approvals"]
+                        candidate = (
+                            baseline["classification_score"],
                             float(text_weight),
                             policy,
                             probability,
                             predicted,
                             guardrail_mask,
+                            baseline,
                         )
+                        if (
+                            best_unconstrained is None
+                            or candidate[0] > best_unconstrained[0]
+                        ):
+                            best_unconstrained = candidate
+                        if catastrophic <= 5 and (
+                            best is None or candidate[0] > best[0]
+                        ):
+                            best = candidate
     assert best is not None
-    _, text_weight, decision_policy, probability, predicted, guardrail_mask = best
+    assert best_unconstrained is not None
+    _, text_weight, decision_policy, probability, predicted, guardrail_mask, _ = best
 
-    ordered = np.sort(probability, axis=1)
-    margin = ordered[:, -1] - ordered[:, -2]
     disagreement = np.abs(text_prob - structured_prob).sum(axis=1) / 2.0
     raw_confidence = np.array(
         [
@@ -375,17 +648,19 @@ def train(
             label, confidence, _ = guardrail
             support = probability[index, list(CLASSES).index(label)]
             raw_confidence[index] = 0.75 * confidence + 0.25 * support
-    confidence_features = np.column_stack(
+    confidence_features = np.vstack(
         [
-            raw_confidence,
-            margin,
-            disagreement,
-            np.array([len(record.missing_fields) for record in corrected_records]),
-            np.array([record.evidence_quality for record in corrected_records]),
-            np.array(
-                [record.mean_ocr_confidence / 100.0 for record in corrected_records]
-            ),
-            guardrail_mask.astype(float),
+            confidence_feature_row(
+                probability[index],
+                str(predicted[index]),
+                float(raw_confidence[index]),
+                float(disagreement[index]),
+                record,
+                pages[index],
+                guardrails[index],
+                list(CLASSES),
+            )
+            for index, record in enumerate(corrected_records)
         ]
     )
     correctness = (predicted == y).astype(int)
@@ -409,17 +684,42 @@ def train(
 
     report = {
         "cases": len(y),
+        "model_strategy": "word_char_structured_blend",
+        "guardrail_training_weight": 0.25,
         "text_weight": text_weight,
         "decision_policy": decision_policy,
         "oof_scores": competition_scores(y, predicted, calibrated_confidence),
         "confusion_labels": list(CLASSES),
         "confusion": confusion_matrix(y, predicted, labels=CLASSES).tolist(),
         "field_accuracy": field_accuracy(label_rows, corrected_records),
+        "emitted_field_accuracy": field_accuracy(
+            label_rows, corrected_records, output_fallbacks, output_overrides
+        ),
+        "field_model_oof_diagnostics": field_model_diagnostics,
+        "oof_extraction_score": competition_extraction_score(
+            label_rows, corrected_records, output_fallbacks, output_overrides
+        ),
+        "oof_internal_extraction_score": competition_extraction_score(
+            label_rows, corrected_records
+        ),
+        "evidence_policy_oof_scores": competition_scores(
+            y, policy_predictions, np.full(len(y), 0.8)
+        ),
+        "unconstrained_policy": {
+            "model_strategy": "word_char_structured_blend",
+            "text_weight": best_unconstrained[1],
+            "decision_policy": best_unconstrained[2],
+            "scores_before_calibration": best_unconstrained[6],
+        },
     }
     print(json.dumps(report, indent=2), flush=True)
 
     print("Fitting final models on all training cases", flush=True)
-    text_model.fit(texts, y)
+    text_model.fit(
+        texts,
+        y,
+        logisticregression__sample_weight=raw_guardrail_weight,
+    )
     field_models = fit_field_models(text_model, texts, label_rows)
     final_engine = correction_engine(text_model, field_models, label_rows)
     final_records = [
@@ -429,6 +729,12 @@ def train(
     structured_model.fit(
         np.array([structured_row(record) for record in final_records], dtype=object),
         y,
+        extratreesclassifier__sample_weight=np.array(
+            [
+                0.25 if deterministic_guardrail(record, case_pages) else 1.0
+                for record, case_pages in zip(final_records, pages)
+            ]
+        ),
     )
     bundle = {
         "version": 2,
@@ -439,6 +745,8 @@ def train(
         "structured_model": structured_model,
         "field_models": field_models,
         "confidence_model": confidence_model,
+        "output_fallbacks": learn_output_fallbacks(label_rows),
+        "output_field_thresholds": output_field_thresholds,
         "name_tokens": sorted(
             {token for row in label_rows for token in row["applicant_name"].split()}
         ),
@@ -460,7 +768,9 @@ def main() -> int:
         "--cache", type=Path, default=Path("training_cache/train_visible_text.jsonl")
     )
     parser.add_argument("--model", type=Path, default=Path("models/model.joblib"))
-    parser.add_argument("--report", type=Path, default=Path("reports/training_report.json"))
+    parser.add_argument(
+        "--report", type=Path, default=Path("reports/training_report.json")
+    )
     parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
     parser.add_argument("--limit", type=int)
     args = parser.parse_args()
