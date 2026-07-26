@@ -126,8 +126,6 @@ def deterministic_guardrail(
     waiver_visible = "HARDSHIP WAIVER" in text or "WAIVER APPROVED" in text
     if record.fee_status == "unpaid" and not waiver_visible:
         return "DENIED", 0.95, "unpaid_fee"
-    if len(flags & REVIEW_FLAGS) >= 2 and "RESCINDED DENIAL" not in text:
-        return "DENIED", 0.82, "combined_review_flags"
     return None
 
 
@@ -204,8 +202,6 @@ def emitted_policy_guardrail(
     waiver_visible = "HARDSHIP WAIVER" in text or "WAIVER APPROVED" in text
     if fee_status == "unpaid" and not waiver_visible:
         return "DENIED", 0.95, "emitted_unpaid_fee"
-    if len(output_flags & REVIEW_FLAGS) >= 2 and "RESCINDED DENIAL" not in text:
-        return "DENIED", 0.82, "emitted_combined_review_flags"
     if output_flags & REVIEW_FLAGS:
         return "NEEDS_REVIEW", 0.88, "emitted_review_risk"
 

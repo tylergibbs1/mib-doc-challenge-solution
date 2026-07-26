@@ -234,6 +234,23 @@ class FieldResolutionTests(unittest.TestCase):
         guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
         self.assertEqual(guardrail[0], "NEEDS_REVIEW")
 
+    def test_multiple_review_only_flags_remain_review_only(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: XW-1\n"
+                "Sponsor ID: SPN-1042\nArrival Date: 2026-05-10\n"
+                "Risk: identity conflict; sponsor mismatch",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(
+            record.risk_flags,
+            "identity_conflict|sponsor_mismatch",
+        )
+        self.assertEqual(evidence_policy(record, pages)[0], "NEEDS_REVIEW")
+
     def test_emitted_placeholder_date_routes_to_review(self):
         pages = [
             page(
