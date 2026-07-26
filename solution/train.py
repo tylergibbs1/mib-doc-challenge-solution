@@ -396,10 +396,16 @@ def train(
     records = [extract_fields(item["case_id"], item["pages"]) for item in evidence]
     texts = np.array([visible_text(case_pages) for case_pages in pages], dtype=object)
     y = np.array([row["adjudication"] for row in label_rows])
+    raw_guardrails = [
+        deterministic_guardrail(record, case_pages)
+        for record, case_pages in zip(records, pages)
+    ]
     raw_guardrail_weight = np.array(
         [
-            0.25 if deterministic_guardrail(record, case_pages) else 1.0
-            for record, case_pages in zip(records, pages)
+            0.25
+            if guardrail and guardrail[2] != "embargoed_home_world"
+            else 1.0
+            for guardrail in raw_guardrails
         ]
     )
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=8090)
@@ -461,7 +467,12 @@ def train(
             y[train_indices],
             extratreesclassifier__sample_weight=np.array(
                 [
-                    0.25 if deterministic_guardrail(record, pages[index]) else 1.0
+                    0.25
+                    if (
+                        (guardrail := deterministic_guardrail(record, pages[index]))
+                        and guardrail[2] != "embargoed_home_world"
+                    )
+                    else 1.0
                     for record, index in zip(corrected_train, train_indices)
                 ]
             ),
@@ -772,7 +783,12 @@ def train(
         y,
         extratreesclassifier__sample_weight=np.array(
             [
-                0.25 if deterministic_guardrail(record, case_pages) else 1.0
+                0.25
+                if (
+                    (guardrail := deterministic_guardrail(record, case_pages))
+                    and guardrail[2] != "embargoed_home_world"
+                )
+                else 1.0
                 for record, case_pages in zip(final_records, pages)
             ]
         ),

@@ -12,6 +12,7 @@ import numpy as np
 from .constants import (
     ADJUDICATIONS,
     DISQUALIFYING_FLAGS,
+    EMBARGOED_HOME_WORLDS,
     REVIEW_FLAGS,
     REVOKED_SPONSORS,
 )
@@ -22,12 +23,14 @@ CONFIDENCE_GUARDRAIL_SOURCES = (
     "none",
     "visible_manual_finding",
     "disqualifying_risk",
+    "embargoed_home_world",
     "revoked_sponsor",
     "transit_class",
     "stale_non_diplomatic_packet",
     "unpaid_fee",
     "combined_review_flags",
     "emitted_disqualifying_risk",
+    "emitted_embargoed_home_world",
     "emitted_revoked_sponsor",
     "emitted_transit_class",
     "emitted_stale_non_diplomatic_packet",
@@ -113,6 +116,11 @@ def deterministic_guardrail(
     flags = _flags(record)
     if flags & DISQUALIFYING_FLAGS:
         return "DENIED", 0.96, "disqualifying_risk"
+    if (
+        record.home_world in EMBARGOED_HOME_WORLDS
+        and record.visa_class != "DIP-1"
+    ):
+        return "DENIED", 0.96, "embargoed_home_world"
     if record.sponsor_id in REVOKED_SPONSORS and record.visa_class != "DIP-1":
         return "DENIED", 0.96, "revoked_sponsor"
     if record.visa_class == "TRANSIT-7":
@@ -175,12 +183,15 @@ def emitted_policy_guardrail(
         else set(str(output["risk_flags"]).split("|"))
     )
     visa_class = str(output["visa_class"])
+    home_world = str(output["home_world"])
     sponsor_id = str(output["sponsor_id"])
     fee_status = str(output["fee_status"])
     text = normalized(visible_text(pages))
 
     if output_flags & DISQUALIFYING_FLAGS:
         return "DENIED", 0.96, "emitted_disqualifying_risk"
+    if home_world in EMBARGOED_HOME_WORLDS and visa_class != "DIP-1":
+        return "DENIED", 0.96, "emitted_embargoed_home_world"
     if sponsor_id in REVOKED_SPONSORS and visa_class != "DIP-1":
         return "DENIED", 0.96, "emitted_revoked_sponsor"
     if visa_class == "TRANSIT-7":

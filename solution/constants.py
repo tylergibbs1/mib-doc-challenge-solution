@@ -84,6 +84,9 @@ REVIEW_FLAGS = frozenset(
     }
 )
 
+# Repeated labeled examples reveal a non-diplomatic embargo for Wolf-1061c.
+EMBARGOED_HOME_WORLDS = frozenset({"Wolf-1061c"})
+
 # Three are public policy. The latter three are consistently revoked in every
 # labeled example and are deliberately inferable exceptions in the incomplete manual.
 REVOKED_SPONSORS = frozenset(

@@ -294,6 +294,20 @@ class FieldResolutionTests(unittest.TestCase):
         guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
         self.assertEqual(guardrail[0], "DENIED")
 
+    def test_emitted_embargoed_home_world_is_denied_outside_dip(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: XW-2\n"
+                "Home World: Wolf-1061c\nSponsor ID: SPN-1042\n"
+                "Arrival Date: 2026-05-10",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: paid", "fee", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
+        self.assertEqual(guardrail[0], "DENIED")
+
     def test_emitted_review_flag_routes_approval_to_review(self):
         pages = [
             page(
