@@ -271,6 +271,27 @@ def visible_output_corrections(
         attested_sponsor = next(iter(attested_sponsors))
         if attested_sponsor != output["sponsor_id"]:
             corrections["sponsor_id"] = attested_sponsor
+            explicit_mismatch = any(
+                phrase in normalized(page.text)
+                for page in pages
+                for phrase in ("SPONSOR MISMATCH", "SPONSOR DOES NOT MATCH")
+            )
+            original_id_is_native = any(
+                output["sponsor_id"] in _extract_sponsors(page.native_text)
+                for page in pages
+            )
+            if (
+                "sponsor_mismatch" in recovered_flags
+                and not explicit_mismatch
+                and not original_id_is_native
+            ):
+                # A trusted attestation can repair a damaged intake ID. When
+                # no document explicitly reports a mismatch, do not serialize
+                # the OCR disagreement itself as a policy risk.
+                recovered_flags.discard("sponsor_mismatch")
+                corrections["risk_flags"] = (
+                    "|".join(sorted(recovered_flags)) if recovered_flags else "none"
+                )
     return corrections
 
 

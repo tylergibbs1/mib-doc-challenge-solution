@@ -225,6 +225,32 @@ class FieldResolutionTests(unittest.TestCase):
             "SPN-2836",
         )
 
+    def test_trusted_attestation_repairs_ocr_mismatch_without_policy_flag(self):
+        damaged_intake = PageEvidence(
+            page_number=1,
+            document_type="intake",
+            text="Applicant: Zed Zarnax\nSponsor ID: SPN-2838",
+            native_text="Applicant: Zed Zarnax",
+            ocr_text="Sponsor ID: SPN-2838",
+            ocr_mean_confidence=75.0,
+            ocr_used=True,
+            visible_native_characters=20,
+        )
+        pages = [
+            damaged_intake,
+            page(
+                "Sponsor Attestation Letter\n"
+                "Sponsor SPN-2836 attests that Zed Zarnax is expected on Earth.",
+                "sponsor",
+                2,
+            ),
+        ]
+        output = extract_fields("MIB-999999", pages).output_fields()
+        output["risk_flags"] = "sponsor_mismatch"
+        corrections = visible_output_corrections(output, pages)
+        self.assertEqual(corrections["sponsor_id"], "SPN-2836")
+        self.assertEqual(corrections["risk_flags"], "none")
+
     def test_low_confidence_ocr_attestation_does_not_override_sponsor(self):
         damaged = PageEvidence(
             page_number=2,
