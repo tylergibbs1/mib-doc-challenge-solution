@@ -784,6 +784,45 @@ def train(
         }
         for index in np.flatnonzero(predicted != y)
     ]
+    oof_case_diagnostics = [
+        {
+            "case_id": label_rows[index]["case_id"],
+            "truth": str(y[index]),
+            "prediction": str(predicted[index]),
+            "confidence": float(calibrated_confidence[index]),
+            "probabilities": {
+                label: float(probability[index, class_index])
+                for class_index, label in enumerate(CLASSES)
+            },
+            "text_probabilities": {
+                label: float(text_prob[index, class_index])
+                for class_index, label in enumerate(CLASSES)
+            },
+            "structured_probabilities": {
+                label: float(structured_prob[index, class_index])
+                for class_index, label in enumerate(CLASSES)
+            },
+            "guardrail": (
+                list(applied_guardrails[index])
+                if applied_guardrails[index] is not None
+                else None
+            ),
+            "evidence_policy_prediction": str(policy_predictions[index]),
+            "page_types": [page.document_type for page in pages[index]],
+            "raw_output": records[index].output_fields(),
+            "corrected_output": corrected_records[index].output_fields(),
+            "emitted_output": emitted_outputs[index],
+            "missing_fields": list(corrected_records[index].missing_fields),
+            "field_model_predictions": {
+                field: {
+                    "value": str(field_oof_values[field][index]),
+                    "confidence": float(field_oof_confidence[field][index]),
+                }
+                for field in FIELD_MODEL_FIELDS
+            },
+        }
+        for index in range(len(y))
+    ]
     report = {
         "cases": len(y),
         "model_strategy": "word_char_structured_blend",
@@ -804,6 +843,7 @@ def train(
         "oof_internal_extraction_score": competition_extraction_score(
             label_rows, corrected_records
         ),
+        "oof_case_diagnostics": oof_case_diagnostics,
         "oof_error_diagnostics": oof_error_diagnostics,
         "evidence_policy_oof_scores": competition_scores(
             y, policy_predictions, np.full(len(y), 0.8)
