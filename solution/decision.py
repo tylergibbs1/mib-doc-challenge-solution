@@ -83,11 +83,24 @@ def visible_model_text(pages: list[PageEvidence]) -> str:
     return _visible_text_from(pages, model_view=True)
 
 
+def _manual_evidence_pages(pages: list[PageEvidence]) -> list[PageEvidence]:
+    """Include notes whose damaged heading defeated the page-type classifier."""
+    manual_pages: list[PageEvidence] = []
+    expected_heading = "MANUAL ADJUDICATOR NOTE"
+    for page in pages:
+        if page.document_type == "manual":
+            manual_pages.append(page)
+            continue
+        heading = " ".join(normalized(page.text).split()[:20])
+        if fuzz.partial_ratio(heading, expected_heading) >= 60.0:
+            manual_pages.append(page)
+    return manual_pages
+
+
 def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
     candidates: list[tuple[int, float, str]] = []
-    for page in pages:
-        if page.document_type != "manual":
-            continue
+    manual_pages = _manual_evidence_pages(pages)
+    for page in manual_pages:
         exact_on_finding_line = False
         for line in page.text.splitlines():
             line_norm = normalized(line)
@@ -128,9 +141,7 @@ def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
                 "REVIEW ONLY RISK FLAG",
             ),
         }
-        for page in pages:
-            if page.document_type != "manual":
-                continue
+        for page in manual_pages:
             norm = normalized(page.text)
             matched = [
                 label
@@ -145,9 +156,7 @@ def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
         # complete "finding + decision" phrase, require a useful line length,
         # and require separation from the runner-up so a bare "Finding:" never
         # becomes an invented decision.
-        for page in pages:
-            if page.document_type != "manual":
-                continue
+        for page in manual_pages:
             for line in page.text.splitlines():
                 line_norm = normalized(line)
                 if len(line_norm) < 8:

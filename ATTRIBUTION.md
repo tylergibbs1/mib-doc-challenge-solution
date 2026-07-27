@@ -14,6 +14,11 @@ solutions:
   [naidx0 challenge solution](https://github.com/naidx0/mib-doc-challenge).
   The implementation and quality gate here are independent and use this
   repository's OCR confidence and visible form-anchor scoring.
+- Recovering signed findings from notes whose damaged headings defeat the
+  page-type classifier was prompted by the public MIT-licensed
+  [rupaut98 challenge solution](https://github.com/rupaut98/mib-doc-solution).
+  This implementation independently uses a two-stage heading and finding
+  match and leaves the underlying page type unchanged.
 
 This repository reimplements that boundary independently. Its priors are
 learned from the public training split, generated out of fold for local

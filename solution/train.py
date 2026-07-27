@@ -211,6 +211,11 @@ def guardrail_training_weight(
     """Downweight literal answer text, but still learn from damaged manual pages."""
     if guardrail and guardrail[2] == "visible_manual_finding":
         _, manual_score = explicit_manual_finding(pages)
+        # A newly recovered note used to be an ordinary, full-weight training
+        # page. Preserve that weight so this experiment changes only the
+        # deterministic evidence recovery, not the learned model distribution.
+        if not any(page.document_type == "manual" for page in pages):
+            return 1.0
         # Exact findings (1.0), a single exact page label (0.9), and trusted
         # reason markers (0.88) expose the answer literally. Fuzzy findings use
         # scores strictly between 0.9 and 1.0 and do not change model weights.

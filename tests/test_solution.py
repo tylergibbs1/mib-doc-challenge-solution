@@ -558,6 +558,30 @@ class FieldResolutionTests(unittest.TestCase):
         decision = deterministic_guardrail(record, pages)
         self.assertEqual(decision[0], "NEEDS_REVIEW")
 
+    def test_manual_finding_recovers_note_with_damaged_misclassified_heading(self):
+        pages = [
+            page(
+                "Manval Adjudicat0r N0te\n"
+                "Finding: APPROVED\n"
+                "Reason: Approval supported by surviving visible evidence.",
+                "unknown",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        decision = deterministic_guardrail(record, pages)
+        self.assertEqual(decision[0], "APPROVED")
+
+    def test_manual_finding_ignores_decision_on_nonmanual_page(self):
+        pages = [
+            page(
+                "Border Intake Form\n"
+                "Prior application was APPROVED\n"
+                "Applicant: Zed Zarnax",
+                "unknown",
+            )
+        ]
+        self.assertEqual(explicit_manual_finding(pages), ("", 0.0))
+
     def test_fuzzy_manual_finding_rejects_ambiguous_blank_finding(self):
         pages = [
             page(
