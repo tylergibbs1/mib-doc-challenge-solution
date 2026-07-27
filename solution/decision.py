@@ -8,6 +8,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+from rapidfuzz import fuzz
 
 from .constants import (
     ADJUDICATIONS,
@@ -138,6 +139,35 @@ def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
             ]
             if len(matched) == 1:
                 candidates.append((page.page_number, 0.88, matched[0]))
+    if not candidates:
+        # A damaged scan often preserves the layout and most glyphs in the
+        # signed finding line while corrupting one or two characters. Match the
+        # complete "finding + decision" phrase, require a useful line length,
+        # and require separation from the runner-up so a bare "Finding:" never
+        # becomes an invented decision.
+        for page in pages:
+            if page.document_type != "manual":
+                continue
+            for line in page.text.splitlines():
+                line_norm = normalized(line)
+                if len(line_norm) < 8:
+                    continue
+                scores = sorted(
+                    (
+                        fuzz.partial_ratio(
+                            line_norm, f"FINDING {label.replace('_', ' ')}"
+                        ),
+                        label,
+                    )
+                    for label in ADJUDICATIONS
+                )
+                best_score, best_label = scores[-1]
+                next_score = scores[-2][0]
+                if best_score >= 78.0 and best_score - next_score >= 3.0:
+                    candidates.append(
+                        (page.page_number, 0.78 + 0.002 * best_score, best_label)
+                    )
+                    break
     if not candidates:
         return "", 0.0
     _, score, label = max(candidates)

@@ -8,6 +8,7 @@ from solution.decision import (
     deterministic_guardrail,
     emitted_policy_guardrail,
     evidence_policy,
+    explicit_manual_finding,
     visible_model_text,
     visible_text,
 )
@@ -542,6 +543,32 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         decision = deterministic_guardrail(record, pages)
         self.assertEqual(decision[0], "NEEDS_REVIEW")
+
+    def test_fuzzy_manual_finding_recovers_ocr_damaged_decision(self):
+        pages = [
+            page(
+                "Manual Adjudicator Note\n"
+                "Finding: NEEOS_REY\n"
+                "EW\n"
+                "Reason: Review-only risk flag present.",
+                "manual",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        decision = deterministic_guardrail(record, pages)
+        self.assertEqual(decision[0], "NEEDS_REVIEW")
+
+    def test_fuzzy_manual_finding_rejects_ambiguous_blank_finding(self):
+        pages = [
+            page(
+                "Manual Adjudicator Note\n"
+                "Finding:\n"
+                "Reason: Ambiguous packet.",
+                "manual",
+            )
+        ]
+        decision, _ = explicit_manual_finding(pages)
+        self.assertEqual(decision, "")
 
     def test_stale_non_diplomatic_packet_is_denied(self):
         pages = [

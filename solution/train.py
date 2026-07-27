@@ -26,6 +26,7 @@ from .decision import (
     deterministic_guardrail,
     emitted_policy_guardrail,
     evidence_policy,
+    explicit_manual_finding,
     threshold_policy_label,
     visible_model_text,
     visible_text,
@@ -200,6 +201,22 @@ def aligned_probabilities(model: object, x, classes: np.ndarray) -> np.ndarray:
     return np.column_stack(
         [raw[:, list(model.classes_).index(label)] for label in classes]
     )
+
+
+def guardrail_training_weight(
+    guardrail: tuple[str, float, str] | None,
+    pages: list[PageEvidence],
+) -> float:
+    """Downweight literal answer text, but still learn from damaged manual pages."""
+    if guardrail and guardrail[2] == "visible_manual_finding":
+        _, manual_score = explicit_manual_finding(pages)
+        # Exact findings (1.0), a single exact page label (0.9), and trusted
+        # reason markers (0.88) expose the answer literally. Fuzzy findings use
+        # scores strictly between 0.9 and 1.0 and do not change model weights.
+        return 1.0 if 0.9 < manual_score < 0.999 else 0.25
+    if guardrail and guardrail[2] != "embargoed_home_world":
+        return 0.25
+    return 1.0
 
 
 def competition_scores(
@@ -418,10 +435,8 @@ def train(
     ]
     raw_guardrail_weight = np.array(
         [
-            0.25
-            if guardrail and guardrail[2] != "embargoed_home_world"
-            else 1.0
-            for guardrail in raw_guardrails
+            guardrail_training_weight(guardrail, case_pages)
+            for guardrail, case_pages in zip(raw_guardrails, pages)
         ]
     )
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=8090)
@@ -483,12 +498,10 @@ def train(
             y[train_indices],
             extratreesclassifier__sample_weight=np.array(
                 [
-                    0.25
-                    if (
-                        (guardrail := deterministic_guardrail(record, pages[index]))
-                        and guardrail[2] != "embargoed_home_world"
+                    guardrail_training_weight(
+                        deterministic_guardrail(record, pages[index]),
+                        pages[index],
                     )
-                    else 1.0
                     for record, index in zip(corrected_train, train_indices)
                 ]
             ),
@@ -820,12 +833,10 @@ def train(
         y,
         extratreesclassifier__sample_weight=np.array(
             [
-                0.25
-                if (
-                    (guardrail := deterministic_guardrail(record, case_pages))
-                    and guardrail[2] != "embargoed_home_world"
+                guardrail_training_weight(
+                    deterministic_guardrail(record, case_pages),
+                    case_pages,
                 )
-                else 1.0
                 for record, case_pages in zip(final_records, pages)
             ]
         ),
