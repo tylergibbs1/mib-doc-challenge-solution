@@ -28,6 +28,7 @@ class PageEvidence:
     ocr_mean_confidence: float
     ocr_used: bool
     visible_native_characters: int
+    model_text: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -224,7 +225,7 @@ def _ocr(gray: np.ndarray, psm: int = 11) -> tuple[str, float]:
     return _tsv_to_text(result.stdout.decode("utf-8", errors="replace"))
 
 
-def render_and_ocr(page: pymupdf.Page, dpi: int = 220) -> tuple[str, float]:
+def render_and_ocr(page: pymupdf.Page, dpi: int = 220) -> tuple[str, float, str]:
     pixmap = page.get_pixmap(
         dpi=dpi, colorspace=pymupdf.csGRAY, alpha=False, annots=True
     )
@@ -240,6 +241,7 @@ def render_and_ocr(page: pymupdf.Page, dpi: int = 220) -> tuple[str, float]:
             retry_text, retry_confidence = _ocr(variant, psm=11)
             if _ocr_quality(retry_text, retry_confidence) > _ocr_quality(*best):
                 best = (retry_text, retry_confidence)
+    model_text = best[0]
     # Some challenge scans are baked 90/180/270 degrees into the raster while
     # the PDF rotation metadata still says upright. Probe alternate orientations
     # only when ordinary passes recover neither enough content nor form cues.
@@ -256,7 +258,7 @@ def render_and_ocr(page: pymupdf.Page, dpi: int = 220) -> tuple[str, float]:
                 and len(re.sub(r"\W", "", FOOTER_RE.sub("", best[0]))) >= 80
             ):
                 break
-    return best
+    return best[0], best[1], model_text
 
 
 def poppler_ocr(pdf_path: Path, page_number: int, dpi: int = 220) -> tuple[str, float]:
@@ -334,7 +336,9 @@ def extract_pdf(pdf_path: str | Path, dpi: int = 220) -> dict:
         for page_index, page in enumerate(document):
             native = visible_native_text(page)
             try:
-                ocr_text, ocr_confidence = render_and_ocr(page, dpi=dpi)
+                ocr_text, ocr_confidence, model_ocr_text = render_and_ocr(
+                    page, dpi=dpi
+                )
                 if ocr_confidence < 78.0 or len(re.sub(r"\W", "", ocr_text)) < 80:
                     alternate_text, alternate_confidence = poppler_ocr(
                         pdf_path, page_index + 1, dpi=dpi
@@ -344,10 +348,13 @@ def extract_pdf(pdf_path: str | Path, dpi: int = 220) -> dict:
                     ) > _ocr_quality(ocr_text, ocr_confidence):
                         ocr_text, ocr_confidence = alternate_text, alternate_confidence
             except (subprocess.SubprocessError, ValueError, RuntimeError):
-                ocr_text, ocr_confidence = "", 0.0
+                ocr_text, ocr_confidence, model_ocr_text = "", 0.0, ""
             # Sanitized native text is exact on digital pages. Put it first so
             # equal-priority evidence does not prefer a noisier OCR duplicate.
             merged = "\n".join(part for part in (native, ocr_text) if part)
+            model_merged = "\n".join(
+                part for part in (native, model_ocr_text) if part
+            )
             pages.append(
                 PageEvidence(
                     page_number=page_index + 1,
@@ -358,6 +365,7 @@ def extract_pdf(pdf_path: str | Path, dpi: int = 220) -> dict:
                     ocr_mean_confidence=ocr_confidence,
                     ocr_used=bool(ocr_text),
                     visible_native_characters=len(FOOTER_RE.sub("", native).strip()),
+                    model_text=model_merged,
                 )
             )
     return {

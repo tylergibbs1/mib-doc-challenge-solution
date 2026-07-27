@@ -8,6 +8,7 @@ from solution.decision import (
     deterministic_guardrail,
     emitted_policy_guardrail,
     evidence_policy,
+    visible_model_text,
     visible_text,
 )
 from solution.fields import extract_fields, visible_output_corrections
@@ -80,6 +81,13 @@ class VisibleEvidenceTests(unittest.TestCase):
         )
         self.assertIn("MIB-CASE", text)
         self.assertNotIn("MIB-123456", text)
+
+    def test_model_view_keeps_baseline_ocr_separate_from_field_ocr(self):
+        evidence = page("Species Match: ORION_GRAYS", "biometric")
+        evidence.model_text = "Observed flags: none"
+        self.assertIn("ORION_GRAYS", visible_text([evidence]))
+        self.assertNotIn("ORION_GRAYS", visible_model_text([evidence]))
+        self.assertIn("Observed flags: none", visible_model_text([evidence]))
 
 
 class FieldResolutionTests(unittest.TestCase):

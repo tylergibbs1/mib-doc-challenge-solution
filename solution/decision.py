@@ -58,7 +58,7 @@ class Decision:
     probabilities: dict[str, float]
 
 
-def visible_text(pages: list[PageEvidence]) -> str:
+def _visible_text_from(pages: list[PageEvidence], *, model_view: bool) -> str:
     # Case identifiers are output keys, not evidence. Removing them prevents
     # character n-grams from learning accidental train-only identity features.
     return "\n\n".join(
@@ -66,11 +66,20 @@ def visible_text(pages: list[PageEvidence]) -> str:
         + re.sub(
             r"\bMIB[-\s]\d{6}\b",
             "MIB-CASE",
-            page.text,
+            page.model_text if model_view and page.model_text else page.text,
             flags=re.IGNORECASE,
         )
         for page in pages
     )
+
+
+def visible_text(pages: list[PageEvidence]) -> str:
+    return _visible_text_from(pages, model_view=False)
+
+
+def visible_model_text(pages: list[PageEvidence]) -> str:
+    """Return stable baseline OCR for learned models, preserving best OCR for rules."""
+    return _visible_text_from(pages, model_view=True)
 
 
 def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
@@ -379,7 +388,7 @@ class DecisionEngine:
         text_model = self.bundle["text_model"]
         structured_model = self.bundle["structured_model"]
         classes = list(self.bundle["classes"])
-        text_prob = text_model.predict_proba([visible_text(pages)])[0]
+        text_prob = text_model.predict_proba([visible_model_text(pages)])[0]
         structured_prob = structured_model.predict_proba(
             [self._structured_row(record)]
         )[0]

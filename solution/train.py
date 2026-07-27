@@ -27,6 +27,7 @@ from .decision import (
     emitted_policy_guardrail,
     evidence_policy,
     threshold_policy_label,
+    visible_model_text,
     visible_text,
 )
 from .fields import Extraction, extract_fields, visible_output_corrections
@@ -394,15 +395,18 @@ def train(
         [PageEvidence.from_dict(page) for page in item["pages"]] for item in evidence
     ]
     model_pages = [
-        [
-            PageEvidence.from_dict(page)
-            for page in item.get("model_pages", item["pages"])
-        ]
+        [PageEvidence.from_dict(page) for page in item.get("model_pages", ())]
         for item in evidence
     ]
     records = [extract_fields(item["case_id"], item["pages"]) for item in evidence]
     texts = np.array(
-        [visible_text(case_pages) for case_pages in model_pages], dtype=object
+        [
+            visible_text(explicit_pages)
+            if explicit_pages
+            else visible_model_text(case_pages)
+            for explicit_pages, case_pages in zip(model_pages, pages)
+        ],
+        dtype=object,
     )
     field_texts = np.array(
         [visible_text(case_pages) for case_pages in pages], dtype=object
