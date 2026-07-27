@@ -558,6 +558,19 @@ class FieldResolutionTests(unittest.TestCase):
         decision = deterministic_guardrail(record, pages)
         self.assertEqual(decision[0], "NEEDS_REVIEW")
 
+    def test_fuzzy_manual_reason_recovers_damaged_approval(self):
+        pages = [
+            page(
+                "Manu... Adjudicator Note\n"
+                "Finding: |\n"
+                "Reason: Clean cr exception-qualified packet.",
+                "unknown",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        decision = deterministic_guardrail(record, pages)
+        self.assertEqual(decision[0], "APPROVED")
+
     def test_manual_finding_recovers_note_with_damaged_misclassified_heading(self):
         pages = [
             page(

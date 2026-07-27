@@ -151,6 +151,25 @@ def explicit_manual_finding(pages: list[PageEvidence]) -> tuple[str, float]:
             if len(matched) == 1:
                 candidates.append((page.page_number, 0.88, matched[0]))
     if not candidates:
+        # Reason phrases can remain nearly complete even when OCR damages a
+        # few glyphs and destroys the finding line. Match the full
+        # policy-specific phrase and require a wide runner-up margin.
+        for page in manual_pages:
+            norm = normalized(page.text)
+            scores = sorted(
+                (
+                    max(fuzz.partial_ratio(norm, marker) for marker in markers),
+                    label,
+                )
+                for label, markers in reason_markers.items()
+            )
+            best_score, best_label = scores[-1]
+            next_score = scores[-2][0]
+            if best_score >= 85.0 and best_score - next_score >= 10.0:
+                candidates.append(
+                    (page.page_number, 0.80 + 0.0012 * best_score, best_label)
+                )
+    if not candidates:
         # A damaged scan often preserves the layout and most glyphs in the
         # signed finding line while corrupting one or two characters. Match the
         # complete "finding + decision" phrase, require a useful line length,
