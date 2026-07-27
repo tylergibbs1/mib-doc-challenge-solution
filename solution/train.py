@@ -12,10 +12,12 @@ import joblib
 import numpy as np
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.feature_extraction import DictVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedKFold as InnerStratifiedKFold
 from sklearn.pipeline import FeatureUnion, make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -27,6 +29,7 @@ from .decision import (
     emitted_policy_guardrail,
     evidence_policy,
     explicit_manual_finding,
+    review_approval_feature_dict,
     threshold_policy_label,
     visible_approval_guardrail,
     visible_model_text,
@@ -423,6 +426,318 @@ def correction_engine(
     return engine
 
 
+def review_approval_raw_gain(actual: str) -> int:
+    """Contest-utility change from routing review to approval."""
+    if actual == "APPROVED":
+        return 6
+    if actual == "DENIED":
+        return -6
+    return -7
+
+
+def select_review_approval_threshold(
+    probabilities: np.ndarray,
+    truth: np.ndarray,
+    fold_ids: np.ndarray,
+    minimum_nonnegative_folds: int,
+) -> dict | None:
+    """Select a conservative review-to-approval threshold on held-out scores."""
+    candidates = sorted(
+        set(
+            np.concatenate(
+                (
+                    np.linspace(0.50, 0.98, 49),
+                    np.quantile(probabilities, np.linspace(0.50, 0.99, 50)),
+                )
+            )
+        )
+    )
+    viable: list[dict] = []
+    for threshold in candidates:
+        selected = probabilities >= threshold
+        if int(selected.sum()) < 5:
+            continue
+        selected_truth = truth[selected]
+        if np.any(selected_truth == "DENIED"):
+            continue
+        gains = np.asarray(
+            [review_approval_raw_gain(str(value)) for value in truth]
+        ) * selected
+        fold_gains = [
+            int(gains[fold_ids == fold].sum())
+            for fold in sorted(set(fold_ids))
+        ]
+        total_gain = int(gains.sum())
+        if (
+            total_gain <= 0
+            or sum(gain >= 0 for gain in fold_gains)
+            < minimum_nonnegative_folds
+        ):
+            continue
+        viable.append(
+            {
+                "threshold": float(threshold),
+                "selected": int(selected.sum()),
+                "approved": int(np.sum(selected_truth == "APPROVED")),
+                "review": int(np.sum(selected_truth == "NEEDS_REVIEW")),
+                "denied": 0,
+                "raw_gain": total_gain,
+                "fold_gains": fold_gains,
+            }
+        )
+    if not viable:
+        return None
+    return max(
+        viable,
+        key=lambda item: (
+            item["raw_gain"],
+            -item["selected"],
+            item["threshold"],
+        ),
+    )
+
+
+def _review_approval_inner_predictions(
+    features: list[dict[str, float]],
+    target: np.ndarray,
+    *,
+    n_splits: int,
+    random_state: int,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Generate OOF probabilities while fitting preprocessing inside each fold."""
+    class_counts = np.bincount(target.astype(int), minlength=2)
+    splits = min(n_splits, int(class_counts.min()))
+    if splits < 2:
+        return None
+    cv = InnerStratifiedKFold(
+        n_splits=splits,
+        shuffle=True,
+        random_state=random_state,
+    )
+    probabilities = np.zeros(len(target), dtype=float)
+    fold_ids = np.empty(len(target), dtype=int)
+    for fold, (train_indices, validation_indices) in enumerate(
+        cv.split(np.zeros(len(target)), target)
+    ):
+        vectorizer = DictVectorizer(sparse=False)
+        train_matrix = vectorizer.fit_transform(
+            [features[index] for index in train_indices]
+        )
+        validation_matrix = vectorizer.transform(
+            [features[index] for index in validation_indices]
+        )
+        model = LogisticRegression(
+            C=1.0,
+            max_iter=2000,
+            solver="liblinear",
+            random_state=random_state + 100 + fold,
+        )
+        model.fit(train_matrix, target[train_indices])
+        approved_index = list(model.classes_).index(True)
+        probabilities[validation_indices] = model.predict_proba(
+            validation_matrix
+        )[:, approved_index]
+        fold_ids[validation_indices] = fold
+    return probabilities, fold_ids
+
+
+def fit_nested_review_approval_head(
+    probability: np.ndarray,
+    predicted: np.ndarray,
+    raw_confidence: np.ndarray,
+    applied_guardrails: list[tuple[str, float, str] | None],
+    records: list[Extraction],
+    pages: list[list[PageEvidence]],
+    outputs: list[dict[str, str]],
+    policy_predictions: np.ndarray,
+    field_confidences: dict[str, np.ndarray],
+    truth: np.ndarray,
+    outer_splits: list[tuple[np.ndarray, np.ndarray]],
+) -> dict:
+    """Fit and honestly evaluate an identity-free review-only approval head."""
+    feature_rows = [
+        review_approval_feature_dict(
+            probability[index],
+            record,
+            pages[index],
+            outputs[index],
+            str(policy_predictions[index]),
+            {
+                field: float(confidence[index])
+                for field, confidence in field_confidences.items()
+            },
+            list(CLASSES),
+        )
+        for index, record in enumerate(records)
+    ]
+    eligible = np.asarray(
+        [
+            index
+            for index in range(len(truth))
+            if predicted[index] == "NEEDS_REVIEW"
+            and applied_guardrails[index] is None
+        ],
+        dtype=int,
+    )
+    oof_probability = np.full(len(truth), np.nan, dtype=float)
+    routed = np.zeros(len(truth), dtype=bool)
+    fold_reports: list[dict] = []
+    for fold, (outer_train, outer_validation) in enumerate(outer_splits):
+        train_indices = eligible[np.isin(eligible, outer_train)]
+        validation_indices = eligible[np.isin(eligible, outer_validation)]
+        train_features = [feature_rows[index] for index in train_indices]
+        train_target = truth[train_indices] == "APPROVED"
+        inner_result = _review_approval_inner_predictions(
+            train_features,
+            train_target,
+            n_splits=4,
+            random_state=18090 + fold,
+        )
+        if inner_result is None:
+            fold_reports.append(
+                {
+                    "fold": fold + 1,
+                    "threshold_selection": "abstain",
+                    "routes": 0,
+                    "raw_gain": 0,
+                    "route_truth": {},
+                }
+            )
+            continue
+        inner_probability, inner_fold = inner_result
+        selection = select_review_approval_threshold(
+            inner_probability,
+            truth[train_indices],
+            inner_fold,
+            minimum_nonnegative_folds=min(3, len(set(inner_fold))),
+        )
+        if selection is None:
+            fold_reports.append(
+                {
+                    "fold": fold + 1,
+                    "threshold_selection": "abstain",
+                    "routes": 0,
+                    "raw_gain": 0,
+                    "route_truth": {},
+                }
+            )
+            continue
+        vectorizer = DictVectorizer(sparse=False)
+        train_matrix = vectorizer.fit_transform(train_features)
+        validation_matrix = vectorizer.transform(
+            [feature_rows[index] for index in validation_indices]
+        )
+        model = LogisticRegression(
+            C=1.0,
+            max_iter=2000,
+            solver="liblinear",
+            random_state=28090 + fold,
+        )
+        model.fit(train_matrix, train_target)
+        approved_index = list(model.classes_).index(True)
+        fold_probability = model.predict_proba(validation_matrix)[
+            :, approved_index
+        ]
+        oof_probability[validation_indices] = fold_probability
+        fold_routed = fold_probability >= selection["threshold"]
+        routed[validation_indices] = fold_routed
+        routed_truth = truth[validation_indices][fold_routed]
+        fold_gain = int(
+            sum(review_approval_raw_gain(str(value)) for value in routed_truth)
+        )
+        fold_reports.append(
+            {
+                "fold": fold + 1,
+                "threshold_selection": selection,
+                "routes": int(fold_routed.sum()),
+                "raw_gain": fold_gain,
+                "classification_delta": 0.01 * fold_gain,
+                "route_truth": dict(Counter(map(str, routed_truth))),
+            }
+        )
+
+    routed_truth = truth[routed]
+    total_gain = int(
+        sum(review_approval_raw_gain(str(value)) for value in routed_truth)
+    )
+    denied_routes = int(np.sum(routed_truth == "DENIED"))
+    outer_nonnegative = sum(
+        fold_report["raw_gain"] >= 0 for fold_report in fold_reports
+    )
+
+    eligible_features = [feature_rows[index] for index in eligible]
+    eligible_target = truth[eligible] == "APPROVED"
+    final_inner = _review_approval_inner_predictions(
+        eligible_features,
+        eligible_target,
+        n_splits=5,
+        random_state=48090,
+    )
+    final_selection = None
+    vectorizer = None
+    model = None
+    if final_inner is not None:
+        final_probability, final_fold = final_inner
+        final_selection = select_review_approval_threshold(
+            final_probability,
+            truth[eligible],
+            final_fold,
+            minimum_nonnegative_folds=max(1, len(set(final_fold)) - 1),
+        )
+    passes_gate = (
+        total_gain > 0
+        and denied_routes == 0
+        and outer_nonnegative >= max(1, len(outer_splits) - 1)
+        and final_selection is not None
+    )
+    routed_predictions = predicted.copy()
+    routed_confidence = raw_confidence.copy()
+    if passes_gate:
+        routed_predictions[routed] = "APPROVED"
+        routed_confidence[routed] = oof_probability[routed]
+        vectorizer = DictVectorizer(sparse=False)
+        matrix = vectorizer.fit_transform(eligible_features)
+        model = LogisticRegression(
+            C=1.0,
+            max_iter=2000,
+            solver="liblinear",
+            random_state=58090,
+        )
+        model.fit(matrix, eligible_target)
+
+    return {
+        "predicted": routed_predictions,
+        "raw_confidence": routed_confidence,
+        "oof_probability": oof_probability,
+        "routed": routed if passes_gate else np.zeros(len(truth), dtype=bool),
+        "vectorizer": vectorizer,
+        "model": model,
+        "threshold": (
+            float(final_selection["threshold"]) if passes_gate else None
+        ),
+        "diagnostics": {
+            "protocol": (
+                "nested OOF; fold-local DictVectorizer and logistic model; "
+                "zero-denied positive-utility inner threshold"
+            ),
+            "identity_features": False,
+            "eligible": len(eligible),
+            "eligible_truth": dict(Counter(map(str, truth[eligible]))),
+            "folds": fold_reports,
+            "folds_nonnegative": outer_nonnegative,
+            "routes": int(routed.sum()) if passes_gate else 0,
+            "route_truth": (
+                dict(Counter(map(str, routed_truth))) if passes_gate else {}
+            ),
+            "raw_gain": total_gain if passes_gate else 0,
+            "classification_delta": 0.01 * total_gain if passes_gate else 0.0,
+            "catastrophic_delta": denied_routes if passes_gate else 0,
+            "final_threshold_selection": final_selection,
+            "passes_gate": passes_gate,
+        },
+    }
+
+
 def train(
     evidence: list[dict],
     label_rows: list[dict[str, str]],
@@ -461,6 +776,7 @@ def train(
         ]
     )
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=8090)
+    outer_splits = list(cv.split(texts, y))
 
     text_model = make_text_model()
     structured_model = make_structured_model()
@@ -479,7 +795,7 @@ def train(
         flush=True,
     )
     for fold, (train_indices, validation_indices) in enumerate(
-        cv.split(texts, y), start=1
+        outer_splits, start=1
     ):
         fold_text_model = make_text_model()
         fold_text_model.fit(
@@ -754,6 +1070,22 @@ def train(
         _,
     ) = best
 
+    approval_head = fit_nested_review_approval_head(
+        probability,
+        predicted,
+        raw_confidence,
+        applied_guardrails,
+        corrected_records,
+        pages,
+        emitted_outputs,
+        policy_predictions,
+        field_oof_confidence,
+        y,
+        outer_splits,
+    )
+    predicted = approval_head["predicted"]
+    raw_confidence = approval_head["raw_confidence"]
+
     disagreement = np.abs(text_prob - structured_prob).sum(axis=1) / 2.0
     confidence_features = np.vstack(
         [
@@ -831,6 +1163,12 @@ def train(
             ),
             "missing_fields": list(corrected_records[index].missing_fields),
             "output": emitted_outputs[index],
+            "review_approval_probability": (
+                float(approval_head["oof_probability"][index])
+                if np.isfinite(approval_head["oof_probability"][index])
+                else None
+            ),
+            "review_approval_routed": bool(approval_head["routed"][index]),
         }
         for index in np.flatnonzero(predicted != y)
     ]
@@ -863,6 +1201,12 @@ def train(
             "corrected_output": corrected_records[index].output_fields(),
             "emitted_output": emitted_outputs[index],
             "missing_fields": list(corrected_records[index].missing_fields),
+            "review_approval_probability": (
+                float(approval_head["oof_probability"][index])
+                if np.isfinite(approval_head["oof_probability"][index])
+                else None
+            ),
+            "review_approval_routed": bool(approval_head["routed"][index]),
             "field_model_predictions": {
                 field: {
                     "value": str(field_oof_values[field][index]),
@@ -879,6 +1223,7 @@ def train(
         "guardrail_training_weight": 0.25,
         "text_weight": text_weight,
         "decision_policy": decision_policy,
+        "review_approval_head": approval_head["diagnostics"],
         "oof_scores": competition_scores(y, predicted, calibrated_confidence),
         "confusion_labels": list(CLASSES),
         "confusion": confusion_matrix(y, predicted, labels=CLASSES).tolist(),
@@ -943,6 +1288,9 @@ def train(
         "confidence_model": confidence_model,
         "confidence_tree_model": confidence_tree_model,
         "confidence_blend_weight": confidence_blend_weight,
+        "review_approval_vectorizer": approval_head["vectorizer"],
+        "review_approval_model": approval_head["model"],
+        "review_approval_threshold": approval_head["threshold"],
         "output_fallbacks": learn_output_fallbacks(label_rows),
         "output_field_thresholds": output_field_thresholds,
         "name_tokens": sorted(

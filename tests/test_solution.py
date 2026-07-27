@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 
+import numpy as np
 import pymupdf
 
 from solution.decision import (
@@ -9,6 +10,7 @@ from solution.decision import (
     emitted_policy_guardrail,
     evidence_policy,
     explicit_manual_finding,
+    review_approval_feature_dict,
     visible_approval_guardrail,
     visible_model_text,
     visible_text,
@@ -103,6 +105,49 @@ class VisibleEvidenceTests(unittest.TestCase):
         self.assertIn("ORION_GRAYS", visible_text([evidence]))
         self.assertNotIn("ORION_GRAYS", visible_model_text([evidence]))
         self.assertIn("Observed flags: none", visible_model_text([evidence]))
+
+    def test_review_approval_features_exclude_case_and_exact_sponsor_identity(self):
+        pages_a = [
+            page(
+                "Applicant: Zed Zarnax\nSponsor ID: SPN-1042",
+                "intake",
+            )
+        ]
+        pages_b = [
+            page(
+                "Applicant: Zed Zarnax\nSponsor ID: SPN-1043",
+                "intake",
+            )
+        ]
+        record_a = extract_fields("MIB-111111", pages_a)
+        record_b = extract_fields("MIB-999999", pages_b)
+        arguments = (
+            np.asarray([0.55, 0.10, 0.35]),
+            {"fee_status": 0.8},
+            ["APPROVED", "DENIED", "NEEDS_REVIEW"],
+        )
+        features_a = review_approval_feature_dict(
+            arguments[0],
+            record_a,
+            pages_a,
+            record_a.output_fields(),
+            "NEEDS_REVIEW",
+            arguments[1],
+            arguments[2],
+        )
+        features_b = review_approval_feature_dict(
+            arguments[0],
+            record_b,
+            pages_b,
+            record_b.output_fields(),
+            "NEEDS_REVIEW",
+            arguments[1],
+            arguments[2],
+        )
+        self.assertEqual(features_a, features_b)
+        serialized = repr(features_a)
+        self.assertNotIn("MIB-111111", serialized)
+        self.assertNotIn("SPN-1042", serialized)
 
 
 class FieldResolutionTests(unittest.TestCase):

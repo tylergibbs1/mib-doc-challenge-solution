@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import date
 from difflib import SequenceMatcher
@@ -501,6 +502,86 @@ def confidence_feature_row(
     )
 
 
+def review_approval_feature_dict(
+    probabilities: np.ndarray,
+    record: Extraction,
+    pages: list[PageEvidence],
+    output: dict[str, str],
+    evidence_prediction: str,
+    field_confidences: dict[str, float],
+    classes: list[str],
+) -> dict[str, float]:
+    """Identity-free visible-evidence features for a review-only specialist."""
+    probability = {
+        label: float(probabilities[index]) for index, label in enumerate(classes)
+    }
+    row: dict[str, float] = {
+        "bias": 1.0,
+        "p:approved": probability["APPROVED"],
+        "p:denied": probability["DENIED"],
+        "p:review": probability["NEEDS_REVIEW"],
+        "p:approve_minus_deny": (
+            probability["APPROVED"] - probability["DENIED"]
+        ),
+        "p:approve_minus_review": (
+            probability["APPROVED"] - probability["NEEDS_REVIEW"]
+        ),
+        f"evidence:{evidence_prediction}": 1.0,
+        f"visa:{output['visa_class']}": 1.0,
+        f"fee:{output['fee_status']}": 1.0,
+        f"purpose:{output['declared_purpose']}": 1.0,
+        f"species:{output['species_code']}": 1.0,
+        f"world:{output['home_world']}": 1.0,
+        "risk:none": float(output["risk_flags"] == "none"),
+        "risk:non_none": float(output["risk_flags"] != "none"),
+        "sponsor:missing": float(output["sponsor_id"] == "SPN-0000"),
+        "sponsor:revoked": float(output["sponsor_id"] in REVOKED_SPONSORS),
+        "missing:count": float(len(record.missing_fields)),
+    }
+    for field in record.missing_fields:
+        row[f"missing:{field}"] = 1.0
+    for field, confidence in field_confidences.items():
+        row[f"field_confidence:{field}"] = float(confidence)
+
+    page_types = Counter(page.document_type for page in pages)
+    for document_type in CONFIDENCE_DOCUMENT_TYPES:
+        selected = [
+            page for page in pages if page.document_type == document_type
+        ]
+        row[f"pages:{document_type}"] = float(page_types[document_type])
+        if selected:
+            row[f"ocr_mean:{document_type}"] = float(
+                np.mean(
+                    [page.ocr_mean_confidence / 100.0 for page in selected]
+                )
+            )
+            row[f"native_zero:{document_type}"] = float(
+                np.mean(
+                    [page.visible_native_characters == 0 for page in selected]
+                )
+            )
+
+    text = normalized("\n".join(page.text for page in pages))
+    for marker in (
+        "OBSERVED FLAGS NONE",
+        "AMOUNT 809 00",
+        "DIP WAIVER",
+        "FEE STATUS PAID",
+        "FEE STATUS WAIVED",
+        "REGISTRY NAME",
+        "PLANETARY REGISTRY EXTRACT",
+        "SPONSOR ATTESTATION",
+        "PRIMARY INTAKE",
+        "PASSPORT IMAGE",
+        "SCAN IMAGE",
+        "COPY ARTIFACT",
+        "VISA CLASS TORN",
+        "FEE STATUS UNKNOWN",
+    ):
+        row[f"marker:{marker}"] = float(marker in text)
+    return row
+
+
 class DecisionEngine:
     def __init__(self, model_path: str | Path | None = None):
         path = (
@@ -684,6 +765,18 @@ class DecisionEngine:
         output.update(visible_output_corrections(output, pages))
         return output
 
+    def _field_model_confidences(
+        self, pages: list[PageEvidence]
+    ) -> dict[str, float]:
+        if not self.bundle or not self.bundle.get("field_models"):
+            return {}
+        vectorizer = self.bundle["text_model"].steps[0][1]
+        matrix = vectorizer.transform([visible_text(pages)])
+        return {
+            field: float(np.max(model.predict_proba(matrix)[0]))
+            for field, model in self.bundle["field_models"].items()
+        }
+
     def decide(
         self,
         record: Extraction,
@@ -744,6 +837,39 @@ class DecisionEngine:
             model_support = probability_map.get(adjudication, 1 / 3)
             confidence = 0.75 * confidence + 0.25 * model_support
             guardrail = approval_guardrail
+
+        if (
+            self.bundle
+            and adjudication == "NEEDS_REVIEW"
+            and guardrail is None
+            and emitted_guardrail is None
+            and self.bundle.get("review_approval_model") is not None
+            and self.bundle.get("review_approval_vectorizer") is not None
+            and self.bundle.get("review_approval_threshold") is not None
+        ):
+            head_features = review_approval_feature_dict(
+                probabilities,
+                record,
+                pages,
+                output,
+                evidence_policy(record, pages)[0],
+                self._field_model_confidences(pages),
+                classes,
+            )
+            head_matrix = self.bundle["review_approval_vectorizer"].transform(
+                [head_features]
+            )
+            head_model = self.bundle["review_approval_model"]
+            approved_index = list(head_model.classes_).index(True)
+            approval_probability = float(
+                head_model.predict_proba(head_matrix)[0, approved_index]
+            )
+            if approval_probability >= float(
+                self.bundle["review_approval_threshold"]
+            ):
+                adjudication = "APPROVED"
+                confidence = approval_probability
+                source = "learned_review_approval"
 
         if self.bundle and "confidence_model" in self.bundle:
             features = confidence_feature_row(
