@@ -188,6 +188,39 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         self.assertEqual(record.risk_flags, "illegible_biometrics")
 
+    def test_exact_observed_none_vetoes_only_inferred_emitted_risk(self):
+        pages = [
+            page("Observed flags: none", "biometric"),
+            page("Registry Status: EMBARGO REVIEW", "registry", 2),
+            page("Sponsor ID: SPN-1000", "intake", 3),
+            page("Sponsor Attestation\nSponsor ID: SPN-2000", "sponsor", 4),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertNotEqual(record.risk_flags, "none")
+        self.assertEqual(
+            visible_output_corrections(record.output_fields(), pages)["risk_flags"],
+            "none",
+        )
+
+    def test_exact_observed_row_keeps_other_explicit_risk_phrase(self):
+        pages = [
+            page("Observed flags: none", "biometric"),
+            page("Planetary embargo is active.", "registry", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.risk_flags, "planetary_embargo")
+
+    def test_malformed_observed_row_keeps_ocr_tolerant_recovery(self):
+        pages = [
+            page(
+                "Observed flags: biohazerd_red\n"
+                "Registry Status: EMBARGO REVIEW",
+                "biometric",
+            )
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertIn("biohazard_red", record.risk_flags.split("|"))
+
     def test_recovers_fee_from_visible_receipt_amount_and_waiver_code(self):
         paid = extract_fields(
             "MIB-999998",
@@ -762,6 +795,23 @@ class FieldResolutionTests(unittest.TestCase):
         self.assertEqual(
             visible_output_corrections(output, pages)["risk_flags"],
             "biohazard_red|illegible_biometrics",
+        )
+
+    def test_output_exact_observed_row_removes_inferred_additions(self):
+        pages = [
+            page(
+                "FORM B-13: Biometric Scan Slip\n"
+                "Observed flags: illegible_biometrics",
+                "biometric",
+            )
+        ]
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "illegible_biometrics|planetary_embargo",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["risk_flags"],
+            "illegible_biometrics",
         )
 
     def test_output_recovers_rescinded_denial_stamp_phrase(self):

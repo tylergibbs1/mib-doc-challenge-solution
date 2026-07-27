@@ -43,6 +43,35 @@ DOTTED_SPONSOR_RE = re.compile(
     r"\bSP[NM]\s*\.\s*((?:[0-9OILSB]\s*){4})\b",
     re.IGNORECASE,
 )
+OBSERVED_FLAGS_RE = re.compile(
+    r"\bobserved\s+flags?\s*[:|\]]\s*([^\r\n]+)",
+    re.IGNORECASE,
+)
+
+RISK_FLAG_PHRASES = {
+    "active_warrant": ("ACTIVE WARRANT", "WARRANT ACTIVE"),
+    "biohazard_red": ("BIOHAZARD RED", "BIO HAZARD RED", "HAZARD LEVEL RED"),
+    "identity_conflict": ("IDENTITY CONFLICT", "IDENTITY MISMATCH"),
+    "illegible_biometrics": (
+        "ILLEGIBLE BIOMETRICS",
+        "BIOMETRICS ILLEGIBLE",
+        "BIOMETRIC UNREADABLE",
+        "BIOMETRICS UNREADABLE",
+        "RISK PANEL MISSING",
+    ),
+    "memory_tampering": ("MEMORY TAMPERING", "MEMORY ALTERATION"),
+    "planetary_embargo": (
+        "PLANETARY EMBARGO",
+        "REGISTRY STATUS EMBARGO",
+        "WORLD EMBARGO",
+    ),
+    "rescinded_denial": (
+        "RESCINDED DENIAL",
+        "DENIAL RESCINDED",
+        "DENIAL CROSSED OUT",
+    ),
+    "sponsor_mismatch": ("SPONSOR MISMATCH", "SPONSOR DOES NOT MATCH"),
+}
 
 
 @dataclass
@@ -105,6 +134,66 @@ def fuzzy_presence(text: str, value: str) -> float:
         )
         / 100.0
     )
+
+
+def _explicit_risk_flags(text: str, *, strict: bool = False) -> set[str]:
+    norm = normalized(text)
+    found: set[str] = set()
+    for flag in RISK_FLAGS:
+        phrases = RISK_FLAG_PHRASES[flag]
+        if strict and flag == "planetary_embargo":
+            phrases = ("PLANETARY EMBARGO", "WORLD EMBARGO")
+        if normalized(flag) in norm or any(phrase in norm for phrase in phrases):
+            found.add(flag)
+    if re.search(r"\bREGISTRY STATUS(?: IS)? EMBARGO\b(?! REVIEW)", norm):
+        found.add("planetary_embargo")
+    return found
+
+
+def _exact_observed_flags(pages: list[PageEvidence]) -> set[str] | None:
+    """Return one fully decoded Observed-flags row, or None if it is ambiguous.
+
+    Exact row geometry is stronger evidence than whole-page fuzzy matching or
+    cross-document inference. Any malformed token or disagreement vetoes the
+    authority route so damaged rows continue through OCR-tolerant recovery.
+    """
+    canonical = {flag.casefold(): flag for flag in RISK_FLAGS}
+    parsed_rows: list[frozenset[str]] = []
+    invalid_row = False
+    for page in pages:
+        for match in OBSERVED_FLAGS_RE.finditer(page.text):
+            raw = re.split(
+                r"\b(?:SCAN IMAGE|Packet MIB-|Synthetic hiring)\b",
+                match.group(1).strip(),
+            )[0]
+            parts = [
+                part.strip()
+                for part in re.split(r"[,|;]+", raw)
+                if part.strip()
+            ]
+            tokens: list[str] = []
+            valid = bool(parts)
+            for part in parts:
+                token = re.sub(
+                    r"[^a-z0-9]+", "_", part.casefold()
+                ).strip("_")
+                if token == "none":
+                    tokens.append(token)
+                elif token in canonical:
+                    tokens.append(canonical[token])
+                else:
+                    valid = False
+            if "none" in tokens and len(tokens) != 1:
+                valid = False
+            if not valid:
+                invalid_row = True
+                continue
+            parsed_rows.append(
+                frozenset(token for token in tokens if token != "none")
+            )
+    if invalid_row or not parsed_rows or len(set(parsed_rows)) != 1:
+        return None
+    return set(parsed_rows[0])
 
 
 def best_lexicon(
@@ -289,33 +378,41 @@ def visible_output_corrections(
         if output["risk_flags"] == "none"
         else set(str(output["risk_flags"]).split("|"))
     )
+    exact_observed_flags = _exact_observed_flags(pages)
     allowed_secondary_flags: set[str] = set()
     if current_flags & DISQUALIFYING_FLAGS:
         allowed_secondary_flags = set(RISK_FLAGS)
     elif current_flags & REVIEW_FLAGS:
         allowed_secondary_flags = set(REVIEW_FLAGS)
-    recovered_flags = set(current_flags)
-    for page in pages:
-        page_norm = normalized(page.text)
-        anchored_risk_page = any(
-            anchor in page_norm
-            for anchor in (
-                "RISK FLAG",
-                "OBSERVED FLAGS",
-                "OBSERVED FISAS",
-                "SPECIES MATCH",
-            )
+    if exact_observed_flags is not None:
+        recovered_flags = exact_observed_flags | _explicit_risk_flags(
+            combined_text, strict=True
         )
-        if (
-            page.document_type not in {"biometric", "manual", "registry"}
-            and not anchored_risk_page
-        ):
-            continue
-        for flag in allowed_secondary_flags:
-            if fuzzy_presence(page.text, flag) >= 0.80:
-                recovered_flags.add(flag)
+    else:
+        recovered_flags = set(current_flags)
+        for page in pages:
+            page_norm = normalized(page.text)
+            anchored_risk_page = any(
+                anchor in page_norm
+                for anchor in (
+                    "RISK FLAG",
+                    "OBSERVED FLAGS",
+                    "OBSERVED FISAS",
+                    "SPECIES MATCH",
+                )
+            )
+            if (
+                page.document_type not in {"biometric", "manual", "registry"}
+                and not anchored_risk_page
+            ):
+                continue
+            for flag in allowed_secondary_flags:
+                if fuzzy_presence(page.text, flag) >= 0.80:
+                    recovered_flags.add(flag)
     if recovered_flags != current_flags:
-        corrections["risk_flags"] = "|".join(sorted(recovered_flags))
+        corrections["risk_flags"] = (
+            "|".join(sorted(recovered_flags)) if recovered_flags else "none"
+        )
     if "DENIAL STAMP RESCINDED" in combined_norm:
         recovered_flags.add("rescinded_denial")
         corrections["risk_flags"] = "|".join(sorted(recovered_flags))
@@ -489,37 +586,8 @@ def _fuzzy_fee(text: str) -> tuple[str, float]:
 def _risk_flags(pages: list[PageEvidence], field_values: dict[str, str]) -> list[str]:
     text = "\n".join(page.text for page in pages)
     norm = normalized(text)
-    found: set[str] = set()
-    phrases = {
-        "active_warrant": ("ACTIVE WARRANT", "WARRANT ACTIVE"),
-        "biohazard_red": ("BIOHAZARD RED", "BIO HAZARD RED", "HAZARD LEVEL RED"),
-        "identity_conflict": ("IDENTITY CONFLICT", "IDENTITY MISMATCH"),
-        "illegible_biometrics": (
-            "ILLEGIBLE BIOMETRICS",
-            "BIOMETRICS ILLEGIBLE",
-            "BIOMETRIC UNREADABLE",
-            "BIOMETRICS UNREADABLE",
-            "RISK PANEL MISSING",
-        ),
-        "memory_tampering": ("MEMORY TAMPERING", "MEMORY ALTERATION"),
-        "planetary_embargo": (
-            "PLANETARY EMBARGO",
-            "REGISTRY STATUS EMBARGO",
-            "WORLD EMBARGO",
-        ),
-        "rescinded_denial": (
-            "RESCINDED DENIAL",
-            "DENIAL RESCINDED",
-            "DENIAL CROSSED OUT",
-        ),
-        "sponsor_mismatch": ("SPONSOR MISMATCH", "SPONSOR DOES NOT MATCH"),
-    }
-    for flag in RISK_FLAGS:
-        if normalized(flag) in norm:
-            found.add(flag)
-            continue
-        if any(phrase in norm for phrase in phrases[flag]):
-            found.add(flag)
+    explicit_found = _explicit_risk_flags(text)
+    found = set(explicit_found)
     # OCR-tolerant recovery is still visible evidence: restrict it to document
     # types that can actually state a risk finding and require a strong match.
     # A badly scanned risk page can lose its document heading while retaining
