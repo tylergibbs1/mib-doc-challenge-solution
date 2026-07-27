@@ -29,6 +29,10 @@ solutions:
   repair. Here it is restricted to a unique registry name backed by native
   text or OCR confidence of at least 90, and cannot supersede a visible manual
   name correction.
+- Its canonical sponsor compliance-sentence parser also prompted an
+  independent output-only visa repair. This version requires one exact
+  sponsor-page sentence, excludes `TRANSIT-7` inference, and preserves manual
+  visa corrections.
 
 This repository reimplements that boundary independently. Its priors are
 learned from the public training split, generated out of fold for local

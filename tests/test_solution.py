@@ -372,6 +372,47 @@ class FieldResolutionTests(unittest.TestCase):
             visible_output_corrections(output, pages),
         )
 
+    def test_sponsor_compliance_sentence_repairs_visa_output(self):
+        sponsor = page(
+            "Sponsor SPN-2836 attests responsibility for class XW-2 compliance.",
+            "sponsor",
+        )
+        output = {
+            "applicant_name": "Trusted Intake",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+            "visa_class": "MED-3",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, [sponsor])["visa_class"],
+            "XW-2",
+        )
+
+    def test_manual_visa_correction_blocks_sponsor_output_repair(self):
+        pages = [
+            page("Manual correction: visa class is DIP-1.", "manual"),
+            page(
+                "Sponsor SPN-2836 attests responsibility "
+                "for class XW-2 compliance.",
+                "sponsor",
+                2,
+            ),
+        ]
+        output = {
+            "applicant_name": "Trusted Intake",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+            "visa_class": "DIP-1",
+        }
+        self.assertNotIn(
+            "visa_class",
+            visible_output_corrections(output, pages),
+        )
+
     def test_manual_approval_supersedes_ambiguous_embargo_review_marker(self):
         pages = [
             page(

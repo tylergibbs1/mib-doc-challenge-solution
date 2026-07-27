@@ -245,6 +245,27 @@ def visible_output_corrections(
         registry_name = next(iter(trusted_registry_names))
         if registry_name != output["applicant_name"]:
             corrections["applicant_name"] = registry_name
+    manual_visa_corrections = {
+        value
+        for page in pages
+        if page.document_type == "manual"
+        if (value := _explicit_correction(page.text, VISA_CLASSES))
+    }
+    sponsor_visa_classes = {
+        value.upper()
+        for page in pages
+        if page.document_type == "sponsor"
+        for value in re.findall(
+            r"responsibility\s+for\s+class\s+([A-Z0-9\-]+)\s+compliance",
+            page.text,
+            flags=re.IGNORECASE,
+        )
+        if value.upper() in VISA_CLASSES and value.upper() != "TRANSIT-7"
+    }
+    if not manual_visa_corrections and len(sponsor_visa_classes) == 1:
+        sponsor_visa = next(iter(sponsor_visa_classes))
+        if sponsor_visa != output["visa_class"]:
+            corrections["visa_class"] = sponsor_visa
     arrival_date = str(output["arrival_date"])
     native_dates = {
         value for page in pages for value in _extract_dates(page.native_text)
