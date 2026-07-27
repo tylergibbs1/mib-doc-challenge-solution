@@ -221,7 +221,18 @@ def visible_output_corrections(
         value for page in pages for value in _extract_dates(page.native_text)
     }
     if arrival_date.startswith("2028-") and arrival_date not in native_dates:
-        corrections["arrival_date"] = f"2026-{arrival_date[5:]}"
+        visible_2026_candidates = {
+            value
+            for page in pages
+            if page.document_type in {"registry", "unknown"}
+            for value in _extract_dates(page.text)
+            if value.startswith("2026-")
+        }
+        corrections["arrival_date"] = (
+            next(iter(visible_2026_candidates))
+            if len(visible_2026_candidates) == 1
+            else f"2026-{arrival_date[5:]}"
+        )
 
     current_flags = (
         set()

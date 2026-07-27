@@ -496,6 +496,31 @@ class FieldResolutionTests(unittest.TestCase):
             {},
         )
 
+    def test_2028_date_repair_prefers_unique_visible_registry_date(self):
+        pages = [
+            PageEvidence(
+                page_number=1,
+                document_type="intake",
+                text="Arrival Date: 2028-06-16",
+                native_text="",
+                ocr_text="Arrival Date: 2028-06-16",
+                ocr_mean_confidence=70.0,
+                ocr_used=True,
+                visible_native_characters=0,
+            ),
+            page("Arrival Date: 2026-05-15", "registry", 2),
+        ]
+        output = {
+            "arrival_date": "2028-06-16",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-1042",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["arrival_date"],
+            "2026-05-15",
+        )
+
     def test_output_recovers_secondary_flag_without_increasing_policy_severity(self):
         pages = [
             page(
