@@ -413,6 +413,74 @@ class FieldResolutionTests(unittest.TestCase):
             visible_output_corrections(output, pages),
         )
 
+    def test_intake_fee_correction_outranks_damaged_receipt(self):
+        pages = [
+            page(
+                "Manual correction: fee status is paid.",
+                "intake",
+            ),
+            page("MIB Fee Receipt\nFee Status: unpaid", "fee", 2),
+        ]
+        output = {
+            "applicant_name": "Trusted Intake",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "unpaid",
+            "sponsor_id": "SPN-2836",
+            "visa_class": "XW-2",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["fee_status"],
+            "paid",
+        )
+
+    def test_signed_unpaid_reason_outranks_intake_fee_correction(self):
+        pages = [
+            page(
+                "Manual correction: fee status is paid.",
+                "intake",
+            ),
+            page(
+                "Finding: DENIED\nReason: Mandatory fee unpaid.",
+                "manual",
+                2,
+            ),
+        ]
+        output = {
+            "applicant_name": "Trusted Intake",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+            "visa_class": "XW-2",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["fee_status"],
+            "unpaid",
+        )
+
+    def test_conflicting_intake_fee_corrections_do_not_invent_precedence(self):
+        pages = [
+            page("Manual correction: fee status is paid.", "intake"),
+            page(
+                "Manual correction: fee status is waived.",
+                "intake",
+                2,
+            ),
+        ]
+        output = {
+            "applicant_name": "Trusted Intake",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "unknown",
+            "sponsor_id": "SPN-2836",
+            "visa_class": "XW-2",
+        }
+        self.assertNotIn(
+            "fee_status",
+            visible_output_corrections(output, pages),
+        )
+
     def test_manual_approval_supersedes_ambiguous_embargo_review_marker(self):
         pages = [
             page(

@@ -344,6 +344,28 @@ def visible_output_corrections(
         for page in pages
     ):
         corrections["fee_status"] = "unpaid"
+    anchored_fee_corrections = {
+        page_type: {
+            match.group(1).casefold()
+            for page in pages
+            if page.document_type == page_type
+            for match in re.finditer(
+                r"\bmanual\s+correction\s*:\s*fee\s+status\s+"
+                r"(?:is|to)\s+(paid|waived|unpaid|unknown)\b",
+                page.text,
+                flags=re.IGNORECASE,
+            )
+        }
+        for page_type in ("manual", "intake")
+    }
+    manual_fee_values = anchored_fee_corrections["manual"]
+    intake_fee_values = anchored_fee_corrections["intake"]
+    if len(manual_fee_values) == 1:
+        corrections["fee_status"] = next(iter(manual_fee_values))
+    elif signed_unpaid_reason:
+        corrections["fee_status"] = "unpaid"
+    elif len(intake_fee_values) == 1:
+        corrections["fee_status"] = next(iter(intake_fee_values))
     standard_sponsors = {
         sponsor_id for page in pages for sponsor_id in _extract_sponsors(page.text)
     }
