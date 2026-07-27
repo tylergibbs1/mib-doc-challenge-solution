@@ -750,6 +750,26 @@ def train(
             np.concatenate([correctness, 1 - correctness[:1]]),
         )
 
+    oof_error_diagnostics = [
+        {
+            "case_id": label_rows[index]["case_id"],
+            "truth": str(y[index]),
+            "prediction": str(predicted[index]),
+            "confidence": float(calibrated_confidence[index]),
+            "probabilities": {
+                label: float(probability[index, class_index])
+                for class_index, label in enumerate(CLASSES)
+            },
+            "guardrail": (
+                list(applied_guardrails[index])
+                if applied_guardrails[index] is not None
+                else None
+            ),
+            "missing_fields": list(corrected_records[index].missing_fields),
+            "output": emitted_outputs[index],
+        }
+        for index in np.flatnonzero(predicted != y)
+    ]
     report = {
         "cases": len(y),
         "model_strategy": "word_char_structured_blend",
@@ -770,6 +790,7 @@ def train(
         "oof_internal_extraction_score": competition_extraction_score(
             label_rows, corrected_records
         ),
+        "oof_error_diagnostics": oof_error_diagnostics,
         "evidence_policy_oof_scores": competition_scores(
             y, policy_predictions, np.full(len(y), 0.8)
         ),
