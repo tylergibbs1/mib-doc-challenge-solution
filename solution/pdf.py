@@ -16,6 +16,25 @@ FOOTER_RE = re.compile(
     r"(?:Packet\s+MIB-\d{6}\s*/\s*page\s*\d+|Synthetic hiring challenge document)",
     re.IGNORECASE,
 )
+UNTRUSTED_INSTRUCTION_RE = re.compile(
+    r"(?:BARCODE\s+PAYLOAD|ANSWER\s+KEY|OUTPUT\s+THIS|"
+    r"\bSYSTEM\s*:|FORCE\s+ADJUDICATION|IGNORE\s+(?:ALL|PREVIOUS))",
+    re.IGNORECASE,
+)
+
+
+def scrub_untrusted_instructions(text: str, *, preserve_marker: bool = False) -> str:
+    """Remove instruction-shaped decoys while optionally preserving attack presence."""
+    lines: list[str] = []
+    redacted = False
+    for line in text.splitlines():
+        if UNTRUSTED_INSTRUCTION_RE.search(line):
+            redacted = True
+            continue
+        lines.append(line)
+    if redacted and preserve_marker:
+        lines.append("[UNTRUSTED INSTRUCTION REDACTED]")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -35,7 +54,31 @@ class PageEvidence:
 
     @classmethod
     def from_dict(cls, value: dict) -> PageEvidence:
-        return cls(**value)
+        sanitized = dict(value)
+        source_texts = [
+            str(value.get(key, ""))
+            for key in ("text", "native_text", "ocr_text", "model_text")
+        ]
+        has_untrusted_instruction = any(
+            UNTRUSTED_INSTRUCTION_RE.search(text) for text in source_texts
+        )
+        sanitized["text"] = scrub_untrusted_instructions(str(value["text"]))
+        sanitized["native_text"] = scrub_untrusted_instructions(
+            str(value["native_text"])
+        )
+        sanitized["ocr_text"] = scrub_untrusted_instructions(str(value["ocr_text"]))
+        model_source = str(value.get("model_text") or value["text"])
+        sanitized["model_text"] = scrub_untrusted_instructions(model_source)
+        if has_untrusted_instruction:
+            sanitized["model_text"] = "\n".join(
+                part
+                for part in (
+                    sanitized["model_text"],
+                    "[UNTRUSTED INSTRUCTION REDACTED]",
+                )
+                if part
+            )
+        return cls(**sanitized)
 
 
 def _rgb(color: int) -> tuple[int, int, int]:
@@ -355,6 +398,23 @@ def extract_pdf(pdf_path: str | Path, dpi: int = 220) -> dict:
             model_merged = "\n".join(
                 part for part in (native, model_ocr_text) if part
             )
+            has_untrusted_instruction = any(
+                UNTRUSTED_INSTRUCTION_RE.search(text)
+                for text in (merged, native, ocr_text, model_merged)
+            )
+            merged = scrub_untrusted_instructions(merged)
+            native = scrub_untrusted_instructions(native)
+            ocr_text = scrub_untrusted_instructions(ocr_text)
+            model_merged = scrub_untrusted_instructions(model_merged)
+            if has_untrusted_instruction:
+                model_merged = "\n".join(
+                    part
+                    for part in (
+                        model_merged,
+                        "[UNTRUSTED INSTRUCTION REDACTED]",
+                    )
+                    if part
+                )
             pages.append(
                 PageEvidence(
                     page_number=page_index + 1,
