@@ -393,8 +393,20 @@ def train(
     pages = [
         [PageEvidence.from_dict(page) for page in item["pages"]] for item in evidence
     ]
+    model_pages = [
+        [
+            PageEvidence.from_dict(page)
+            for page in item.get("model_pages", item["pages"])
+        ]
+        for item in evidence
+    ]
     records = [extract_fields(item["case_id"], item["pages"]) for item in evidence]
-    texts = np.array([visible_text(case_pages) for case_pages in pages], dtype=object)
+    texts = np.array(
+        [visible_text(case_pages) for case_pages in model_pages], dtype=object
+    )
+    field_texts = np.array(
+        [visible_text(case_pages) for case_pages in pages], dtype=object
+    )
     y = np.array([row["adjudication"] for row in label_rows])
     raw_guardrails = [
         deterministic_guardrail(record, case_pages)
@@ -438,10 +450,10 @@ def train(
         train_labels = [label_rows[index] for index in train_indices]
         fold_output_fallbacks = learn_output_fallbacks(train_labels)
         fold_field_models = fit_field_models(
-            fold_text_model, texts[train_indices], train_labels
+            fold_text_model, field_texts[train_indices], train_labels
         )
         validation_matrix = fold_text_model.steps[0][1].transform(
-            texts[validation_indices]
+            field_texts[validation_indices]
         )
         for field, model in fold_field_models.items():
             field_probability = model.predict_proba(validation_matrix)
@@ -772,7 +784,7 @@ def train(
         y,
         logisticregression__sample_weight=raw_guardrail_weight,
     )
-    field_models = fit_field_models(text_model, texts, label_rows)
+    field_models = fit_field_models(text_model, field_texts, label_rows)
     final_engine = correction_engine(text_model, field_models, label_rows)
     final_records = [
         final_engine.correct_record(record, case_pages)
