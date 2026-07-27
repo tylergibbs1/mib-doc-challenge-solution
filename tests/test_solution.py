@@ -538,6 +538,25 @@ class FieldResolutionTests(unittest.TestCase):
             "biohazard_red|illegible_biometrics",
         )
 
+    def test_output_recovers_rescinded_denial_stamp_phrase(self):
+        pages = [
+            page(
+                "Manual Adjudicator Note\n"
+                "Prior denial stamp rescinded. Route to human review.",
+                "manual",
+            )
+        ]
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-1042",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["risk_flags"],
+            "rescinded_denial",
+        )
+
     def test_output_preserves_visible_unknown_fee_without_decisive_amount(self):
         pages = [page("MIB Fee Receipt\nFee Status: unknown", "fee")]
         output = {

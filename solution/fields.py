@@ -277,6 +277,9 @@ def visible_output_corrections(
                 recovered_flags.add(flag)
     if recovered_flags != current_flags:
         corrections["risk_flags"] = "|".join(sorted(recovered_flags))
+    if "DENIAL STAMP RESCINDED" in combined_norm:
+        recovered_flags.add("rescinded_denial")
+        corrections["risk_flags"] = "|".join(sorted(recovered_flags))
     explicit_unknown_fee = "FEE STATUS UNKNOWN" in combined_norm
     decisive_paid_amount = bool(
         re.search(r"\bamount\s*[:|\]]?\s*\$?\s*809(?:[.,]00)?\b", combined_lower)
