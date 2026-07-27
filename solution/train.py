@@ -752,19 +752,44 @@ def train(
     )
     correctness = (predicted == y).astype(int)
     confidence_model = LogisticRegression(C=0.5, max_iter=1000, random_state=8090)
+    confidence_tree_model = ExtraTreesClassifier(
+        n_estimators=400,
+        min_samples_leaf=5,
+        max_features=0.8,
+        class_weight="balanced",
+        n_jobs=1,
+        random_state=8090,
+    )
+    confidence_blend_weight = 0.5
     if len(np.unique(correctness)) == 2:
         calibration_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=9080)
-        calibrated_confidence = cross_val_predict(
+        linear_confidence = cross_val_predict(
             confidence_model,
             confidence_features,
             correctness,
             cv=calibration_cv,
             method="predict_proba",
         )[:, 1]
+        tree_confidence = cross_val_predict(
+            confidence_tree_model,
+            confidence_features,
+            correctness,
+            cv=calibration_cv,
+            method="predict_proba",
+        )[:, 1]
+        calibrated_confidence = (
+            confidence_blend_weight * linear_confidence
+            + (1.0 - confidence_blend_weight) * tree_confidence
+        )
         confidence_model.fit(confidence_features, correctness)
+        confidence_tree_model.fit(confidence_features, correctness)
     else:
         calibrated_confidence = raw_confidence
         confidence_model.fit(
+            np.vstack([confidence_features, confidence_features[:1]]),
+            np.concatenate([correctness, 1 - correctness[:1]]),
+        )
+        confidence_tree_model.fit(
             np.vstack([confidence_features, confidence_features[:1]]),
             np.concatenate([correctness, 1 - correctness[:1]]),
         )
@@ -896,6 +921,8 @@ def train(
         "structured_model": structured_model,
         "field_models": field_models,
         "confidence_model": confidence_model,
+        "confidence_tree_model": confidence_tree_model,
+        "confidence_blend_weight": confidence_blend_weight,
         "output_fallbacks": learn_output_fallbacks(label_rows),
         "output_field_thresholds": output_field_thresholds,
         "name_tokens": sorted(

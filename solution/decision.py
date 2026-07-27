@@ -638,9 +638,21 @@ class DecisionEngine:
                 guardrail,
                 classes,
             ).reshape(1, -1)
-            confidence = float(
+            linear_confidence = float(
                 self.bundle["confidence_model"].predict_proba(features)[0, 1]
             )
+            tree_model = self.bundle.get("confidence_tree_model")
+            if tree_model is not None:
+                tree_confidence = float(tree_model.predict_proba(features)[0, 1])
+                linear_weight = float(
+                    self.bundle.get("confidence_blend_weight", 0.5)
+                )
+                confidence = (
+                    linear_weight * linear_confidence
+                    + (1.0 - linear_weight) * tree_confidence
+                )
+            else:
+                confidence = linear_confidence
         else:
             confidence *= 1.0 - min(0.22, 0.12 * disagreement)
             confidence *= 0.88 + 0.12 * record.evidence_quality
