@@ -493,13 +493,26 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         self.assertEqual(record.risk_flags, "none")
 
-    def test_emitted_disqualifying_risk_cannot_remain_approved(self):
+    def test_emitted_guardrail_cannot_override_signed_manual_finding(self):
         pages = [
             page(
                 "Applicant: Zed Zarnax\nVisa Class: DIP-1\nArrival Date: 2026-05-10",
                 "intake",
             ),
             page("Finding: APPROVED\nPlanetary embargo is active.", "manual", 2),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
+        self.assertIsNone(guardrail)
+        self.assertEqual(deterministic_guardrail(record, pages)[0], "APPROVED")
+
+    def test_emitted_guardrail_still_enforces_visible_risk_without_manual(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\n"
+                "Arrival Date: 2026-05-10\nPlanetary embargo is active.",
+                "intake",
+            )
         ]
         record = extract_fields("MIB-999999", pages)
         guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
@@ -575,7 +588,7 @@ class FieldResolutionTests(unittest.TestCase):
         guardrail = emitted_policy_guardrail(record, record.output_fields(), pages)
         self.assertEqual(guardrail[0], "NEEDS_REVIEW")
 
-    def test_date_prior_does_not_hide_missing_policy_evidence(self):
+    def test_signed_manual_finding_outweighs_date_prior_missingness(self):
         pages = [
             page(
                 "Applicant: Zed Zarnax\nVisa Class: DIP-1",
@@ -586,9 +599,10 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         output = record.output_fields({"arrival_date": "2026-04-14"})
         guardrail = emitted_policy_guardrail(record, output, pages)
-        self.assertEqual(guardrail[0], "NEEDS_REVIEW")
+        self.assertIsNone(guardrail)
+        self.assertEqual(deterministic_guardrail(record, pages)[0], "APPROVED")
 
-    def test_missing_non_dip_sponsor_routes_to_review(self):
+    def test_signed_manual_finding_outweighs_sponsor_prior_missingness(self):
         pages = [
             page(
                 "Applicant: Zed Zarnax\nVisa Class: XW-1\nArrival Date: 2026-05-10",
@@ -603,7 +617,8 @@ class FieldResolutionTests(unittest.TestCase):
             record.output_fields({"sponsor_id": "SPN-1042"}),
             pages,
         )
-        self.assertEqual(guardrail[0], "NEEDS_REVIEW")
+        self.assertIsNone(guardrail)
+        self.assertEqual(deterministic_guardrail(record, pages)[0], "APPROVED")
 
     def test_visible_diplomatic_consensus_can_certify_approval(self):
         pages = [

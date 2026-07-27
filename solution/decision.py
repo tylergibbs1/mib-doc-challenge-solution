@@ -280,6 +280,15 @@ def emitted_policy_guardrail(
     adjudicated. This second pass is deliberately one-way: it can only make an
     approval more conservative.
     """
+    # A signed manual finding is the highest-precedence visible evidence and
+    # deterministic_guardrail() has already applied it. Output-only priors and
+    # statistical field corrections are lower-precedence estimates; allowing
+    # them to overwrite the signed finding reverses the published evidence
+    # hierarchy and makes damaged manual packets systematically less reliable.
+    manual, _ = explicit_manual_finding(pages)
+    if manual:
+        return None
+
     output_flags = (
         set()
         if output["risk_flags"] == "none"
@@ -329,8 +338,7 @@ def emitted_policy_guardrail(
     if visa_class != "DIP-1" and "sponsor_id" in missing_fields:
         return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
 
-    manual, _ = explicit_manual_finding(pages)
-    if manual != "APPROVED" and record.fee_status == "unknown":
+    if record.fee_status == "unknown":
         return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
     return None
 
