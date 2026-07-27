@@ -60,6 +60,7 @@ FIELD_MODEL_FIELDS = (
     "home_world",
     "visa_class",
     "declared_purpose",
+    "risk_flags",
     "fee_status",
 )
 OUTPUT_PRIOR_FIELDS = (
