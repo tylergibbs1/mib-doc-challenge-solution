@@ -565,6 +565,21 @@ class FieldResolutionTests(unittest.TestCase):
         }
         self.assertNotIn("fee_status", visible_output_corrections(output, pages))
 
+    def test_output_recovers_unique_dotted_sponsor_only_when_unresolved(self):
+        pages = [page("Sponsor ID: SPN.3847", "intake")]
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-0000",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["sponsor_id"], "SPN-3847"
+        )
+
+        output["sponsor_id"] = "SPN-4040"
+        self.assertNotIn("sponsor_id", visible_output_corrections(output, pages))
+
     def test_manual_finding_has_highest_precedence(self):
         pages = [
             page(

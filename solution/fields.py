@@ -39,6 +39,10 @@ SPONSOR_RE = re.compile(
     r"\bSP[NM]\s*[-: ]\s*((?:[0-9OILSB]\s*){4})\b",
     re.IGNORECASE,
 )
+DOTTED_SPONSOR_RE = re.compile(
+    r"\bSP[NM]\s*\.\s*((?:[0-9OILSB]\s*){4})\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -173,6 +177,13 @@ def _extract_sponsors(text: str) -> list[str]:
     ]
 
 
+def _extract_dotted_sponsors(text: str) -> list[str]:
+    return [
+        f"SPN-{_correct_digits(re.sub(r'\s+', '', match.group(1)))}"
+        for match in DOTTED_SPONSOR_RE.finditer(text)
+    ]
+
+
 def _explicit_sponsor_correction(text: str) -> str:
     """Return a visible sponsor correction without trusting unrelated IDs."""
     for line in text.splitlines():
@@ -291,6 +302,17 @@ def visible_output_corrections(
         for page in pages
     ):
         corrections["fee_status"] = "unpaid"
+    standard_sponsors = {
+        sponsor_id for page in pages for sponsor_id in _extract_sponsors(page.text)
+    }
+    if output.get("sponsor_id") == "SPN-0000" and not standard_sponsors:
+        dotted_sponsors = {
+            sponsor_id
+            for page in pages
+            for sponsor_id in _extract_dotted_sponsors(page.text)
+        }
+        if len(dotted_sponsors) == 1:
+            corrections["sponsor_id"] = next(iter(dotted_sponsors))
     attested_sponsors = {
         sponsor_id
         for page in pages
