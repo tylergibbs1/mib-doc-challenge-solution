@@ -317,6 +317,61 @@ class FieldResolutionTests(unittest.TestCase):
         record = extract_fields("MIB-999999", pages)
         self.assertEqual(record.applicant_name, "Nexix Nexvara")
 
+    def test_trusted_registry_name_repairs_output_only(self):
+        registry = page("Registry Name: Nexix Nexvara", "registry", 2)
+        output = {
+            "applicant_name": "Adjacent Decoy",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, [registry])["applicant_name"],
+            "Nexix Nexvara",
+        )
+
+    def test_low_confidence_registry_name_does_not_replace_output(self):
+        registry = page("Registry Name: Nexix Nexvara", "registry", 2)
+        registry = PageEvidence.from_dict(
+            {
+                **registry.to_dict(),
+                "native_text": "",
+                "ocr_mean_confidence": 89.9,
+            }
+        )
+        output = {
+            "applicant_name": "Trusted Intake",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+        }
+        self.assertNotIn(
+            "applicant_name",
+            visible_output_corrections(output, [registry]),
+        )
+
+    def test_explicit_name_correction_blocks_registry_output_repair(self):
+        pages = [
+            page(
+                "Manual correction: applicant is Nexix Nexvara.",
+                "manual",
+            ),
+            page("Registry Name: Adjacent Decoy", "registry", 2),
+        ]
+        output = {
+            "applicant_name": "Nexix Nexvara",
+            "arrival_date": "2026-05-10",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-2836",
+        }
+        self.assertNotIn(
+            "applicant_name",
+            visible_output_corrections(output, pages),
+        )
+
     def test_manual_approval_supersedes_ambiguous_embargo_review_marker(self):
         pages = [
             page(

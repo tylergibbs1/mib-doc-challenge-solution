@@ -227,6 +227,24 @@ def visible_output_corrections(
     combined_text = "\n".join(page.text for page in pages)
     combined_norm = normalized(combined_text)
     combined_lower = combined_text.casefold()
+    explicit_name_corrections = {
+        value for page in pages if (value := _explicit_name_correction(page.text))
+    }
+    trusted_registry_names = {
+        name
+        for page in pages
+        if page.document_type == "registry"
+        for raw_name in _label_value(_page_lines(page), ("Applicant", "Registry Name"))
+        if (name := _clean_name(raw_name))
+        and (
+            compact(name) in compact(page.native_text)
+            or page.ocr_mean_confidence >= 90.0
+        )
+    }
+    if not explicit_name_corrections and len(trusted_registry_names) == 1:
+        registry_name = next(iter(trusted_registry_names))
+        if registry_name != output["applicant_name"]:
+            corrections["applicant_name"] = registry_name
     arrival_date = str(output["arrival_date"])
     native_dates = {
         value for page in pages for value in _extract_dates(page.native_text)

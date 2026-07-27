@@ -25,6 +25,10 @@ solutions:
   This implementation independently requires visible `$809` fee evidence,
   unique intake/registry name agreement, and no conflicting guardrail; it
   never reads or copies another submission's predictions.
+- The same public solution prompted an independent output-only registry-name
+  repair. Here it is restricted to a unique registry name backed by native
+  text or OCR confidence of at least 90, and cannot supersede a visible manual
+  name correction.
 
 This repository reimplements that boundary independently. Its priors are
 learned from the public training split, generated out of fold for local
