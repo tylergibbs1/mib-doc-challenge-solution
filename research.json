@@ -23,7 +23,7 @@
     "solution/predict.py",
     "tests/test_public_contract.py"
   ],
-  "run_command": ".venv/bin/python -m solution.train --cache training_cache/train_visible_text_rotation.jsonl --model /tmp/mib-autoresearch-model.joblib --report /tmp/mib-autoresearch-report.json --workers 4 && .venv/bin/python -c \"import json; r=json.load(open('/tmp/mib-autoresearch-report.json')); s=r['oof_extraction_score']+r['oof_scores']['classification_score']+r['oof_scores']['calibration_score']; print(f'research_score: {s:.6f}'); print(f\\\"oof_accuracy: {r['oof_scores']['accuracy']:.6f}\\\"); print(f\\\"catastrophic_false_approvals: {r['oof_scores']['catastrophic_false_approvals']}\\\"); print(f\\\"extraction_score: {r['oof_extraction_score']:.6f}\\\")\"",
+  "run_command": ".venv/bin/python -m solution.train --cache training_cache/train_visible_text_dual_live.jsonl --model /tmp/mib-autoresearch-model.joblib --report /tmp/mib-autoresearch-report.json --workers 4 && .venv/bin/python -c \"import json; r=json.load(open('/tmp/mib-autoresearch-report.json')); s=r['oof_extraction_score']+r['oof_scores']['classification_score']+r['oof_scores']['calibration_score']; print(f'research_score: {s:.6f}'); print(f\\\"oof_accuracy: {r['oof_scores']['accuracy']:.6f}\\\"); print(f\\\"catastrophic_false_approvals: {r['oof_scores']['catastrophic_false_approvals']}\\\"); print(f\\\"extraction_score: {r['oof_extraction_score']:.6f}\\\")\"",
   "metric_grep": "^research_score:",
   "metric_name": "research_score",
   "metric_direction": "higher",
