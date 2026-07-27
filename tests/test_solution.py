@@ -9,6 +9,7 @@ from solution.decision import (
     emitted_policy_guardrail,
     evidence_policy,
     explicit_manual_finding,
+    visible_approval_guardrail,
     visible_model_text,
     visible_text,
 )
@@ -439,6 +440,52 @@ class FieldResolutionTests(unittest.TestCase):
             pages,
         )
         self.assertEqual(guardrail[0], "NEEDS_REVIEW")
+
+    def test_visible_diplomatic_consensus_can_certify_approval(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\n"
+                "Arrival Date: 2026-05-10\nDeclared Purpose: research",
+                "intake",
+            ),
+            page("Registry Name: Zed Zarnax", "registry", 2),
+            page("MIB Fee Receipt\nAmount: $809.00", "fee", 3),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        output = record.output_fields({"fee_status": "paid"})
+        self.assertEqual(
+            visible_approval_guardrail(record, output, pages),
+            ("APPROVED", 0.61, "visible_dip_layout_consensus"),
+        )
+
+    def test_visible_diplomatic_consensus_requires_name_agreement(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\n"
+                "Arrival Date: 2026-05-10\nDeclared Purpose: research",
+                "intake",
+            ),
+            page("Registry Name: Mira Quell", "registry", 2),
+            page("MIB Fee Receipt\nAmount: $809.00", "fee", 3),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        output = record.output_fields({"fee_status": "paid"})
+        self.assertIsNone(visible_approval_guardrail(record, output, pages))
+
+    def test_visible_diplomatic_consensus_never_overrides_manual_review(self):
+        pages = [
+            page(
+                "Applicant: Zed Zarnax\nVisa Class: DIP-1\n"
+                "Arrival Date: 2026-05-10\nDeclared Purpose: research",
+                "intake",
+            ),
+            page("Registry Name: Zed Zarnax", "registry", 2),
+            page("MIB Fee Receipt\nAmount: $809.00", "fee", 3),
+            page("Finding: NEEDS REVIEW", "manual", 4),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        output = record.output_fields({"fee_status": "paid"})
+        self.assertIsNone(visible_approval_guardrail(record, output, pages))
 
     def test_extracts_clean_multi_page_packet(self):
         pages = [

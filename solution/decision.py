@@ -40,6 +40,7 @@ CONFIDENCE_GUARDRAIL_SOURCES = (
     "emitted_combined_review_flags",
     "emitted_review_risk",
     "emitted_missing_policy_evidence",
+    "visible_dip_layout_consensus",
 )
 CONFIDENCE_DOCUMENT_TYPES = (
     "manual",
@@ -332,6 +333,81 @@ def emitted_policy_guardrail(
     if manual != "APPROVED" and record.fee_status == "unknown":
         return "NEEDS_REVIEW", 0.82, "emitted_missing_policy_evidence"
     return None
+
+
+def _clean_visible_person_name(raw: str) -> str:
+    """Return a conservative two-token name from a layout-text field."""
+    text = " ".join(raw.split())
+    text = re.split(
+        r"\s{2,}|\s+(?:PASSPORT|CASE|SPN|VISA|SPECIES|HOME|ARRIVAL|FEE)\b",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip()
+    parts = text.split()
+    if len(parts) < 2:
+        return ""
+    candidate = " ".join(parts[:2])
+    if not all(re.fullmatch(r"[A-Za-z][A-Za-z'-]+", part) for part in parts[:2]):
+        return ""
+    return candidate.casefold()
+
+
+def visible_approval_guardrail(
+    record: Extraction,
+    output: dict,
+    pages: list[PageEvidence],
+) -> tuple[str, float, str] | None:
+    """Certify a narrow diplomatic approval from corroborated visible facts.
+
+    This positive rule requires the paid amount itself and the same applicant
+    identity on intake and registry evidence. It never treats absent risk text
+    as clean and never overrides a signed adjudicator finding.
+    """
+    manual, _ = explicit_manual_finding(pages)
+    if manual:
+        return None
+    if str(output["visa_class"]) != "DIP-1":
+        return None
+    if str(output["fee_status"]) != "paid":
+        return None
+    if str(output["risk_flags"]) != "none":
+        return None
+    if str(output["arrival_date"]) == "1900-01-01":
+        return None
+    if str(output["declared_purpose"]) == "medical consult":
+        return None
+
+    text = visible_text(pages)
+    if not re.search(
+        r"(?:Amount\s*[:|]?\s*)?\$\s*809(?:[.,]00)?",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return None
+    registries = {
+        cleaned
+        for raw in re.findall(
+            r"Registry\s+Name\s*:?\s*"
+            r"([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+)+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if (cleaned := _clean_visible_person_name(raw))
+    }
+    applicants = {
+        cleaned
+        for raw in re.findall(
+            r"Applicant\s*:?\s*"
+            r"([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+)+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if (cleaned := _clean_visible_person_name(raw))
+    }
+    if len(registries) != 1 or registries != applicants:
+        return None
+    return "APPROVED", 0.61, "visible_dip_layout_consensus"
 
 
 def expected_utility_label(probabilities: np.ndarray, classes: list[str]) -> str:
@@ -648,6 +724,18 @@ class DecisionEngine:
                 confidence = 0.75 * emitted_confidence + 0.25 * model_support
                 source = emitted_source
                 guardrail = emitted_guardrail
+
+        approval_guardrail = visible_approval_guardrail(record, output, pages)
+        if (
+            approval_guardrail
+            and adjudication == "NEEDS_REVIEW"
+            and guardrail is None
+            and emitted_guardrail is None
+        ):
+            adjudication, confidence, source = approval_guardrail
+            model_support = probability_map.get(adjudication, 1 / 3)
+            confidence = 0.75 * confidence + 0.25 * model_support
+            guardrail = approval_guardrail
 
         if self.bundle and "confidence_model" in self.bundle:
             features = confidence_feature_row(

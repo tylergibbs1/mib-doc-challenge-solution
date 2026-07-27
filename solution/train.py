@@ -28,6 +28,7 @@ from .decision import (
     evidence_policy,
     explicit_manual_finding,
     threshold_policy_label,
+    visible_approval_guardrail,
     visible_model_text,
     visible_text,
 )
@@ -260,6 +261,7 @@ def apply_policy_constraints(
     initial_prediction: np.ndarray,
     guardrails: list[tuple[str, float, str] | None],
     emitted_guardrails: list[tuple[str, float, str] | None],
+    approval_guardrails: list[tuple[str, float, str] | None],
 ) -> tuple[np.ndarray, np.ndarray, list[tuple[str, float, str] | None]]:
     """Apply training-time constraints in the same order as inference."""
     predicted = initial_prediction.copy()
@@ -287,6 +289,19 @@ def apply_policy_constraints(
         )
         if not should_apply:
             continue
+        predicted[index] = label
+        support = probability[index, list(CLASSES).index(label)]
+        raw_confidence[index] = 0.75 * confidence + 0.25 * support
+        applied_guardrails[index] = guardrail
+    for index, guardrail in enumerate(approval_guardrails):
+        if (
+            not guardrail
+            or predicted[index] != "NEEDS_REVIEW"
+            or guardrails[index] is not None
+            or emitted_guardrails[index] is not None
+        ):
+            continue
+        label, confidence, _ = guardrail
         predicted[index] = label
         support = probability[index, list(CLASSES).index(label)]
         raw_confidence[index] = 0.75 * confidence + 0.25 * support
@@ -663,6 +678,10 @@ def train(
         emitted_policy_guardrail(record, output, case_pages)
         for record, output, case_pages in zip(corrected_records, emitted_outputs, pages)
     ]
+    approval_guardrails = [
+        visible_approval_guardrail(record, output, case_pages)
+        for record, output, case_pages in zip(corrected_records, emitted_outputs, pages)
+    ]
     best: tuple | None = None
     best_unconstrained = None
     for text_weight in np.linspace(0.35, 0.9, 12):
@@ -699,6 +718,7 @@ def train(
                             initial_prediction,
                             guardrails,
                             emitted_guardrails,
+                            approval_guardrails,
                         )
                         baseline = competition_scores(y, predicted, raw_confidence)
                         catastrophic = baseline["catastrophic_false_approvals"]

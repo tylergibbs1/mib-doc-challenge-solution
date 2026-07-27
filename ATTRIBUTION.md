@@ -19,6 +19,12 @@ solutions:
   [rupaut98 challenge solution](https://github.com/rupaut98/mib-doc-solution).
   This implementation independently uses a two-stage heading and finding
   match and leaves the underlying page type unchanged.
+- The narrow DIP-1 positive-evidence certificate was prompted by the public
+  MIT-licensed
+  [Abhishek21g challenge solution](https://github.com/Abhishek21g/mib-doc-challenge-solution/tree/08947bd72b0058d5803d9bfe08428cd7311485b7).
+  This implementation independently requires visible `$809` fee evidence,
+  unique intake/registry name agreement, and no conflicting guardrail; it
+  never reads or copies another submission's predictions.
 
 This repository reimplements that boundary independently. Its priors are
 learned from the public training split, generated out of fold for local
