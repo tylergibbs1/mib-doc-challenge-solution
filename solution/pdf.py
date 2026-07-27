@@ -110,9 +110,9 @@ def _remove_form_lines(gray: np.ndarray) -> np.ndarray:
 
 
 def _ocr_quality(text: str, confidence: float) -> float:
-    normalized = re.sub(r"[^A-Z0-9]+", " ", text.upper())
+    content = FOOTER_RE.sub("", text)
+    normalized = re.sub(r"[^A-Z0-9]+", " ", content.upper())
     anchors = (
-        "MIB",
         "FORM",
         "APPLICANT",
         "SPECIES",
@@ -132,7 +132,31 @@ def _ocr_quality(text: str, confidence: float) -> float:
         "NEEDS REVIEW",
     )
     anchor_score = 12.0 * sum(anchor in normalized for anchor in anchors)
-    return confidence + min(18.0, len(re.sub(r"\W", "", text)) / 30.0) + anchor_score
+    return (
+        confidence
+        + min(18.0, len(re.sub(r"\W", "", content)) / 30.0)
+        + anchor_score
+    )
+
+
+def _ocr_anchor_count(text: str) -> int:
+    content = FOOTER_RE.sub("", text)
+    normalized = re.sub(r"[^A-Z0-9]+", " ", content.upper())
+    return sum(
+        anchor in normalized
+        for anchor in (
+            "FORM",
+            "APPLICANT",
+            "SPECIES",
+            "SPONSOR",
+            "ARRIVAL",
+            "FEE STATUS",
+            "REGISTRY",
+            "BIOMETRIC",
+            "OBSERVED FLAGS",
+            "FINDING",
+        )
+    )
 
 
 def _tsv_to_text(tsv: str) -> tuple[str, float]:
@@ -216,6 +240,22 @@ def render_and_ocr(page: pymupdf.Page, dpi: int = 220) -> tuple[str, float]:
             retry_text, retry_confidence = _ocr(variant, psm=11)
             if _ocr_quality(retry_text, retry_confidence) > _ocr_quality(*best):
                 best = (retry_text, retry_confidence)
+    # Some challenge scans are baked 90/180/270 degrees into the raster while
+    # the PDF rotation metadata still says upright. Probe alternate orientations
+    # only when ordinary passes recover neither enough content nor form cues.
+    content = FOOTER_RE.sub("", best[0])
+    content_characters = len(re.sub(r"\W", "", content))
+    if content_characters < 100 and _ocr_anchor_count(best[0]) < 2:
+        for turns in (0, 1, 3, 2):
+            rotated = np.ascontiguousarray(np.rot90(gray, turns))
+            retry_text, retry_confidence = _ocr(rotated, psm=6)
+            if _ocr_quality(retry_text, retry_confidence) > _ocr_quality(*best):
+                best = (retry_text, retry_confidence)
+            if (
+                _ocr_anchor_count(best[0]) >= 2
+                and len(re.sub(r"\W", "", FOOTER_RE.sub("", best[0]))) >= 80
+            ):
+                break
     return best
 
 

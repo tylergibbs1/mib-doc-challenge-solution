@@ -11,7 +11,7 @@ from solution.decision import (
     visible_text,
 )
 from solution.fields import extract_fields, visible_output_corrections
-from solution.pdf import PageEvidence, _tsv_to_text, visible_native_text
+from solution.pdf import PageEvidence, _ocr_quality, _tsv_to_text, visible_native_text
 
 
 def page(text: str, document_type: str, number: int = 1) -> PageEvidence:
@@ -28,6 +28,16 @@ def page(text: str, document_type: str, number: int = 1) -> PageEvidence:
 
 
 class VisibleEvidenceTests(unittest.TestCase):
+    def test_ocr_quality_does_not_reward_standard_footer(self):
+        footer = (
+            "Packet MIB-123456 / page 2\nSynthetic hiring challenge document"
+        )
+        self.assertEqual(_ocr_quality(footer, 90.0), 90.0)
+        self.assertGreater(
+            _ocr_quality("Species Match: ORION_GRAYS", 90.0),
+            _ocr_quality(footer, 90.0),
+        )
+
     def test_tesseract_quote_does_not_swallow_tsv_rows(self):
         header = (
             "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\t"
