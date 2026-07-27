@@ -582,6 +582,19 @@ class FieldResolutionTests(unittest.TestCase):
         ]
         self.assertEqual(explicit_manual_finding(pages), ("", 0.0))
 
+    def test_applicant_name_uses_independent_page_consensus(self):
+        pages = [
+            page("Applicant: Decoy Person", "intake", 1),
+            page("Applicant: Trusted Name", "biometric", 2),
+            page(
+                "Registry Name: Trusted Name\nRegistry Name: Trusted Name",
+                "registry",
+                3,
+            ),
+        ]
+        record = extract_fields("MIB-999999", pages)
+        self.assertEqual(record.applicant_name, "Trusted Name")
+
     def test_fuzzy_manual_finding_rejects_ambiguous_blank_finding(self):
         pages = [
             page(

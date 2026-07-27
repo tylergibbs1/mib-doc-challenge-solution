@@ -308,6 +308,37 @@ def _select(
     return value, score
 
 
+def _select_name_with_page_consensus(
+    candidates: list[tuple[float, int, str]], fallback: str
+) -> tuple[str, float]:
+    """Reward independent page agreement without counting duplicate OCR lines."""
+    if not candidates:
+        return fallback, 0.0
+    explicit = [candidate for candidate in candidates if candidate[0] >= 10.0]
+    if explicit:
+        return _select(explicit, fallback)
+
+    grouped: dict[str, list[tuple[float, int, str]]] = {}
+    for candidate in candidates:
+        grouped.setdefault(normalized(candidate[2]), []).append(candidate)
+    scored: list[tuple[float, int, str]] = []
+    for matches in grouped.values():
+        best_by_page: dict[int, tuple[float, int, str]] = {}
+        for candidate in matches:
+            page_number = candidate[1]
+            best_by_page[page_number] = max(
+                candidate,
+                best_by_page.get(page_number, candidate),
+                key=lambda item: (item[0], item[1]),
+            )
+        representative = max(
+            best_by_page.values(), key=lambda item: (item[0], item[1])
+        )
+        consensus_score = representative[0] + 2.5 * (len(best_by_page) - 1)
+        scored.append((consensus_score, representative[1], representative[2]))
+    return _select(scored, fallback)
+
+
 def _explicit_correction(text: str, values: tuple[str, ...]) -> str:
     for line in text.splitlines():
         if "correction" not in line.casefold():
@@ -583,7 +614,12 @@ def extract_fields(
         "fee_status": "unknown",
     }
     for field, fallback in fallbacks.items():
-        values[field], quality = _select(candidates[field], fallback)
+        if field == "applicant_name":
+            values[field], quality = _select_name_with_page_consensus(
+                candidates[field], fallback
+            )
+        else:
+            values[field], quality = _select(candidates[field], fallback)
         quality_scores.append(min(1.0, quality / 5.0))
     flags = _risk_flags(pages, values)
     values["risk_flags"] = "|".join(flags) if flags else "none"
