@@ -36,6 +36,7 @@ CONFIDENCE_GUARDRAIL_SOURCES = (
     "emitted_transit_class",
     "emitted_stale_non_diplomatic_packet",
     "emitted_unpaid_fee",
+    "emitted_unknown_fee",
     "emitted_combined_review_flags",
     "emitted_review_risk",
     "emitted_missing_policy_evidence",
@@ -314,6 +315,8 @@ def emitted_policy_guardrail(
     waiver_visible = "HARDSHIP WAIVER" in text or "WAIVER APPROVED" in text
     if fee_status == "unpaid" and not waiver_visible:
         return "DENIED", 0.95, "emitted_unpaid_fee"
+    if fee_status == "unknown":
+        return "NEEDS_REVIEW", 0.86, "emitted_unknown_fee"
     if output_flags & REVIEW_FLAGS:
         return "NEEDS_REVIEW", 0.88, "emitted_review_risk"
 

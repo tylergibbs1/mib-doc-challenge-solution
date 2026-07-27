@@ -513,6 +513,33 @@ class FieldResolutionTests(unittest.TestCase):
             "biohazard_red|illegible_biometrics",
         )
 
+    def test_output_preserves_visible_unknown_fee_without_decisive_amount(self):
+        pages = [page("MIB Fee Receipt\nFee Status: unknown", "fee")]
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-1042",
+        }
+        self.assertEqual(
+            visible_output_corrections(output, pages)["fee_status"], "unknown"
+        )
+
+    def test_decisive_receipt_amount_overrides_unknown_fee_text(self):
+        pages = [
+            page(
+                "MIB Fee Receipt\nFee Status: unknown\nAmount: $809.00",
+                "fee",
+            )
+        ]
+        output = {
+            "arrival_date": "2026-04-17",
+            "risk_flags": "none",
+            "fee_status": "paid",
+            "sponsor_id": "SPN-1042",
+        }
+        self.assertNotIn("fee_status", visible_output_corrections(output, pages))
+
     def test_manual_finding_has_highest_precedence(self):
         pages = [
             page(

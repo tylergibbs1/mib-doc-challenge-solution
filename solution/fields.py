@@ -213,6 +213,9 @@ def visible_output_corrections(
         for page in raw_pages
     ]
     corrections: dict[str, str] = {}
+    combined_text = "\n".join(page.text for page in pages)
+    combined_norm = normalized(combined_text)
+    combined_lower = combined_text.casefold()
     arrival_date = str(output["arrival_date"])
     native_dates = {
         value for page in pages for value in _extract_dates(page.native_text)
@@ -252,6 +255,25 @@ def visible_output_corrections(
                 recovered_flags.add(flag)
     if recovered_flags != current_flags:
         corrections["risk_flags"] = "|".join(sorted(recovered_flags))
+    explicit_unknown_fee = "FEE STATUS UNKNOWN" in combined_norm
+    decisive_paid_amount = bool(
+        re.search(r"\bamount\s*[:|\]]?\s*\$?\s*809(?:[.,]00)?\b", combined_lower)
+    )
+    decisive_waiver = bool(
+        re.search(r"\bamount\s*[:|\]]?\s*\$?\s*0(?:[.,]00)?\b", combined_lower)
+        and re.search(r"\bdip[\s-]*waiver\b", combined_lower)
+    )
+    signed_unpaid_reason = "MANDATORY FEE UNPAID" in combined_norm
+    if (
+        explicit_unknown_fee
+        and not decisive_paid_amount
+        and not decisive_waiver
+        and not signed_unpaid_reason
+    ):
+        # "unknown" is a valid observed value, not merely the missing-value
+        # sentinel. Preserve it when no stronger visible receipt evidence
+        # resolves the status.
+        corrections["fee_status"] = "unknown"
     if any(
         page.document_type == "manual"
         and "MANDATORY FEE UNPAID" in normalized(page.text)
@@ -570,14 +592,16 @@ def extract_fields(
         # token does not. These paired amount/waiver signals are visible,
         # template-level evidence and are unambiguous in the public corpus.
         if page.document_type == "fee":
-            if re.search(r"\bamount\s*\$?\s*809(?:[.,]00)?\b", lowered):
+            if re.search(
+                r"\bamount\s*[:|\]]?\s*\$?\s*809(?:[.,]00)?\b", lowered
+            ):
                 candidates["fee_status"].append(
                     (9.0 * page_quality, page.page_number, "paid")
                 )
                 exact_fee = True
-            elif re.search(r"\bamount\s*\$?\s*0(?:[.,]00)?\b", lowered) and re.search(
-                r"\bdip[\s-]*waiver\b", lowered
-            ):
+            elif re.search(
+                r"\bamount\s*[:|\]]?\s*\$?\s*0(?:[.,]00)?\b", lowered
+            ) and re.search(r"\bdip[\s-]*waiver\b", lowered):
                 candidates["fee_status"].append(
                     (9.0 * page_quality, page.page_number, "waived")
                 )
