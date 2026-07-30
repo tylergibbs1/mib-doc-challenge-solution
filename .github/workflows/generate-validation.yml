@@ -1,0 +1,168 @@
+name: Generate validation artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DATA_ARCHIVE: mib-doc-challenge-public-data-v2026-07-07.zip
+  DATA_SHA256: a9bb8c1bbf51346ebf49c2e3e1acdb7a5d6cd0760162767b0d133c7b7200f3c4
+  EXPECTED_PREDICTION_SHA256: 2d52fae3e8d0f85b9668fa6301440f73854ef6c0aef9ee64abb1903302091529
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download checksum-verified public data
+        run: |
+          curl --fail --location --retry 5 \
+            --output "$DATA_ARCHIVE" \
+            "https://huggingface.co/datasets/arjun-krishna1/mib-doc-challenge-data/resolve/main/$DATA_ARCHIVE?download=true"
+          printf '%s  %s\n' "$DATA_SHA256" "$DATA_ARCHIVE" | sha256sum --check -
+          unzip -q "$DATA_ARCHIVE" -d public-data
+      - name: Preserve production worker ordering in 16 segments
+        run: |
+          python tools/prepare_validation_shards.py \
+            public-data/data/validation generated-shards
+      - name: Build immutable runtime image
+        run: |
+          docker build -t mib-distributed-generation .
+          mkdir -p generated-image
+          docker save mib-distributed-generation \
+            --output generated-image/mib-distributed-generation.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generation-image
+          path: generated-image/mib-distributed-generation.tar
+          compression-level: 0
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-0, path: generated-shards/0/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-1, path: generated-shards/1/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-2, path: generated-shards/2/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-3, path: generated-shards/3/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-4, path: generated-shards/4/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-5, path: generated-shards/5/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-6, path: generated-shards/6/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-7, path: generated-shards/7/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-8, path: generated-shards/8/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-9, path: generated-shards/9/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-10, path: generated-shards/10/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-11, path: generated-shards/11/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-12, path: generated-shards/12/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-13, path: generated-shards/13/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-14, path: generated-shards/14/, compression-level: 0, retention-days: 1}
+      - uses: actions/upload-artifact@v4
+        with: {name: validation-15, path: generated-shards/15/, compression-level: 0, retention-days: 1}
+
+  extract:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        task: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: generation-image
+          path: generated-image
+      - uses: actions/download-artifact@v4
+        with:
+          name: validation-${{ matrix.task }}
+          path: input
+      - name: Extract visible evidence states
+        run: |
+          docker load --input generated-image/mib-distributed-generation.tar
+          mkdir -p output
+          docker run --rm --network none \
+            --cpus 4 \
+            --memory 8g \
+            --read-only \
+            --tmpfs /tmp:rw,size=2g \
+            -e OMP_NUM_THREADS=1 \
+            -e OPENBLAS_NUM_THREADS=1 \
+            -e MKL_NUM_THREADS=1 \
+            -e MIB_NATIVE_SCAN_OCR=1 \
+            -e MIB_REVIEW_MODEL=1 \
+            --entrypoint python \
+            --mount type=bind,src="$PWD/input",dst=/input,readonly \
+            --mount type=bind,src="$PWD/output",dst=/output \
+            --mount type=bind,src="$PWD/tools/generate_state_segment.py",dst=/app/generate_state_segment.py,readonly \
+            mib-distributed-generation \
+            /app/generate_state_segment.py \
+            /input /output/states.jsonl --task "${{ matrix.task }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: states-${{ matrix.task }}
+          path: output/states.jsonl
+          compression-level: 0
+          retention-days: 1
+
+  finalize:
+    needs: extract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: generation-image
+          path: generated-image
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: states-*
+          path: states
+      - name: Apply global batch decision and verify deterministic hash
+        run: |
+          docker load --input generated-image/mib-distributed-generation.tar
+          mkdir -p output
+          docker run --rm --network none \
+            --cpus 4 \
+            --memory 8g \
+            --read-only \
+            --tmpfs /tmp:rw,size=2g \
+            -e OMP_NUM_THREADS=1 \
+            -e OPENBLAS_NUM_THREADS=1 \
+            -e MKL_NUM_THREADS=1 \
+            -e MIB_NATIVE_SCAN_OCR=1 \
+            -e MIB_REVIEW_MODEL=1 \
+            --entrypoint python \
+            --mount type=bind,src="$PWD/states",dst=/states,readonly \
+            --mount type=bind,src="$PWD/output",dst=/output \
+            --mount type=bind,src="$PWD/tools/finalize_distributed_states.py",dst=/app/finalize_distributed_states.py,readonly \
+            mib-distributed-generation \
+            /app/finalize_distributed_states.py \
+            /states /output/predictions.jsonl \
+            --expected-sha256 "$EXPECTED_PREDICTION_SHA256"
+          python scripts/validate_submission.py \
+            --submission output/predictions.jsonl \
+            --manifest data/validation_manifest.csv \
+            --require-complete
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-validation-predictions
+          path: output/predictions.jsonl
+          compression-level: 0
+          retention-days: 1
