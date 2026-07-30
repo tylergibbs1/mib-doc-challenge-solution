@@ -1,0 +1,117 @@
+name: Generate validation from prepared artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Completed run containing generation-image and validation-* artifacts
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  EXPECTED_PREDICTION_SHA256: 2d52fae3e8d0f85b9668fa6301440f73854ef6c0aef9ee64abb1903302091529
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 16
+      matrix:
+        task: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: generation-image
+          path: generated-image
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.source_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: validation-${{ matrix.task }}
+          path: input
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Extract visible evidence states
+        run: |
+          docker load --input generated-image/mib-distributed-generation.tar
+          mkdir -p output
+          docker run --rm --network none \
+            --cpus 4 \
+            --memory 8g \
+            --read-only \
+            --tmpfs /tmp:rw,size=2g \
+            -e OMP_NUM_THREADS=1 \
+            -e OPENBLAS_NUM_THREADS=1 \
+            -e MKL_NUM_THREADS=1 \
+            -e MIB_NATIVE_SCAN_OCR=1 \
+            -e MIB_REVIEW_MODEL=1 \
+            --entrypoint python \
+            --mount type=bind,src="$PWD/input",dst=/input,readonly \
+            --mount type=bind,src="$PWD/output",dst=/output \
+            --mount type=bind,src="$PWD/tools/generate_state_segment.py",dst=/app/generate_state_segment.py,readonly \
+            mib-distributed-generation \
+            /app/generate_state_segment.py \
+            /input /output/states.jsonl --task "${{ matrix.task }}" \
+            --local-workers 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: states-${{ matrix.task }}
+          path: output/states.jsonl
+          compression-level: 0
+          retention-days: 1
+
+  finalize:
+    needs: extract
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: generation-image
+          path: generated-image
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.source_run_id }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: states-*
+          path: states
+      - name: Apply global batch decision and verify deterministic hash
+        run: |
+          docker load --input generated-image/mib-distributed-generation.tar
+          mkdir -p output
+          docker run --rm --network none \
+            --cpus 4 \
+            --memory 8g \
+            --read-only \
+            --tmpfs /tmp:rw,size=2g \
+            -e OMP_NUM_THREADS=1 \
+            -e OPENBLAS_NUM_THREADS=1 \
+            -e MKL_NUM_THREADS=1 \
+            -e MIB_NATIVE_SCAN_OCR=1 \
+            -e MIB_REVIEW_MODEL=1 \
+            --entrypoint python \
+            --mount type=bind,src="$PWD/states",dst=/states,readonly \
+            --mount type=bind,src="$PWD/output",dst=/output \
+            --mount type=bind,src="$PWD/tools/finalize_distributed_states.py",dst=/app/finalize_distributed_states.py,readonly \
+            mib-distributed-generation \
+            /app/finalize_distributed_states.py \
+            /states /output/predictions.jsonl \
+            --expected-sha256 "$EXPECTED_PREDICTION_SHA256"
+          python scripts/validate_submission.py \
+            --submission output/predictions.jsonl \
+            --manifest data/validation_manifest.csv \
+            --require-complete
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-validation-predictions
+          path: output/predictions.jsonl
+          compression-level: 0
+          retention-days: 1

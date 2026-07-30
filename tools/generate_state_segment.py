@@ -25,6 +25,7 @@ def main() -> None:
     parser.add_argument("output_path", type=Path)
     parser.add_argument("--task", type=int, required=True)
     parser.add_argument("--segments-per-worker", type=int, default=4)
+    parser.add_argument("--local-workers", type=int, default=4)
     args = parser.parse_args()
 
     worker, segment = divmod(args.task, args.segments_per_worker)
@@ -36,11 +37,21 @@ def main() -> None:
         raise SystemExit("state segment has no PDFs")
 
     temporary = Path(tempfile.mkdtemp(prefix="mib-segment-", dir="/tmp"))
-    shard = predict.Shard(temporary, 0, pdfs)
-    while not shard.finished:
+    worker_count = min(args.local_workers, len(pdfs), os.cpu_count() or 1)
+    shards = [
+        predict.Shard(temporary, index, pdfs[index::worker_count])
+        for index in range(worker_count)
+    ]
+    while not all(shard.finished for shard in shards):
         time.sleep(predict.POLL_SECS)
-        shard.tick()
-    states = predict._collect_states([shard], pdfs, complete=True)
+        for shard in shards:
+            shard.tick()
+    extracted = predict._collect_states(shards, pdfs, complete=True)
+    # _collect_states preserves the production runner's shard-major emission
+    # order. CI parallelism is an implementation detail, so restore the
+    # segment's original production-stream order before attaching positions.
+    by_stem = {predict._state_stem(state): state for state in extracted}
+    states = [by_stem[Path(pdf).stem] for pdf in pdfs]
     if len(states) != len(pdfs):
         raise SystemExit(
             f"state count mismatch: {len(states)} != {len(pdfs)}"
