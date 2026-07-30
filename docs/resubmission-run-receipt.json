@@ -1,0 +1,48 @@
+{
+  "schema": "mib-resubmission-run-receipt-v1",
+  "generated_at_utc": "2026-07-30T07:06:39Z",
+  "runtime": {
+    "repository": "https://github.com/tylergibbs1/mib-doc-challenge-solution",
+    "runtime_source_commit": "d9defdececa63ded5065c6fdc34715dc6744afff",
+    "upstream_source": "https://github.com/callingmoonshots/mib-doc-challenge-solution",
+    "upstream_commit": "9ed5ed360ae40053dfee80bff09eef29a83a3980",
+    "license": "MIT",
+    "container_image_id": "sha256:98f29f64fdd107569949dfda78a733ccb024d6db1fd3198e1e1c8e703e3bba32",
+    "container_image_size_bytes": 287096560,
+    "model_artifact_bytes": 14144822,
+    "network": "disabled",
+    "cpu_only": true
+  },
+  "dataset": {
+    "archive_sha256": "a9bb8c1bbf51346ebf49c2e3e1acdb7a5d6cd0760162767b0d133c7b7200f3c4",
+    "validation_manifest_sha256": "cf149c9bb9ed08982cb85e6663f51d2de6efba2d14099def90de4b03b9867244",
+    "expected_cases": 5000,
+    "labels_available_to_generation": false
+  },
+  "generation": {
+    "prepared_artifacts_run_id": 30515320432,
+    "distributed_extraction_run_id": 30517937414,
+    "extraction_segments": 16,
+    "initial_successful_extractions": 4987,
+    "timeout_retries": 13,
+    "successful_timeout_retries": 13,
+    "model_or_policy_changes_during_retries": false,
+    "manual_case_answer_edits": false,
+    "copied_validation_predictions": false
+  },
+  "output": {
+    "path": "submissions/tylergibbs1/predictions.jsonl",
+    "sha256": "08ba6fb615129dccd78ce29025d8d3945b7bea1b1e5bec4a0093fb8e7ec8e71f",
+    "records": 5000,
+    "unique_case_ids": 5000,
+    "missing_manifest_case_ids": 0,
+    "official_validator_passed": true,
+    "approved_with_disqualifying_risk": 0,
+    "approved_with_sponsor_mismatch": 0
+  },
+  "notes": [
+    "Extraction states were produced by the unchanged attributed runtime in network-disabled CPU containers.",
+    "Thirteen host-timeout cases were retried with longer watchdogs; OCR, field extraction, policy, model artifacts, and finalization logic were unchanged.",
+    "The final JSONL was produced by batch finalization over model states, not by editing individual prediction rows."
+  ]
+}

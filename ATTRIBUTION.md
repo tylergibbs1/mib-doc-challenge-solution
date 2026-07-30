@@ -18,5 +18,5 @@ The challenge scaffold and organizer utilities remain under 8090, Inc.'s MIT
 license in the root `LICENSE`.
 
 No other participant's validation predictions were copied. Tyler Gibbs's
-validation artifact is generated independently by running this attributed
+validation artifact was generated independently by running this attributed
 source against the checksum-verified public validation dataset.

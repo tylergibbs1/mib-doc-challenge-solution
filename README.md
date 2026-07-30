@@ -44,8 +44,8 @@ under MIT from Brian Pridgen's `handemanai` baseline at commit
 `4b37a7815bea79de0a01beca6eb6566e1611af73`.
 
 No other participant's validation predictions were copied or used. The
-resubmission predictions are generated locally by executing this code over the
-checksum-verified public validation PDFs.
+resubmission predictions were generated independently by executing this code
+over the checksum-verified public validation PDFs.
 
 See [ATTRIBUTION.md](ATTRIBUTION.md), [NOTICE.md](NOTICE.md), and
 [SOLUTION.md](SOLUTION.md) for details.
