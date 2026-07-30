@@ -1,19 +1,55 @@
-.git
-.github
-.env
-.env.*
-.DS_Store
+# Default-deny the Docker build context. These exceptions are the exact paths
+# named by Dockerfile COPY instructions; challenge data, labels, predictions,
+# evaluator outputs, work receipts, repository history, and dev tooling never
+# enter the context sent to the builder.
+**
+!Dockerfile
+!run.sh
+!mib/
+!mib/__init__.py
+!mib/caseid.py
+!mib/correct.py
+!mib/ctcscore.py
+!mib/extract.py
+!mib/feeread.py
+!mib/flagread.py
+!mib/forensics.py
+!mib/native_ledger.py
+!mib/noteread.py
+!mib/ocr.py
+!mib/ocr_backend.py
+!mib/ocr_legacy.py
+!mib/ocr_v6.py
+!mib/parse_ocr.py
+!mib/pipeline.py
+!mib/pixmatch.py
+!mib/review_model.py
+!mib/rules.py
+!mib/sponsorread.py
+!mib/terminal_guards.py
+!mib/two_ledger.py
+!mib/view_registry.py
+!mib/vocab.py
+!mib/worldread.py
+!models/
+!models/calibrator.json
+!models/confusion_costs.json
+!models/en_PP-OCRv5_rec_mobile.onnx
+!models/name_vocab.json
+!models/path_confidence.json
+!models/pix_bank.npz
+!models/reason_buckets.json
+!models/review_resolver.json
+!models/transducer_dec.int8.onnx
+!models/transducer_enc.int8.onnx
+!models/transducer_vocab.json
+!scripts/
+!scripts/predict.py
+!scripts/run_shard.py
+
+# Generated or executable residue remains denied inside otherwise included
+# source directories.
 **/__pycache__/
-*.py[cod]
-.pytest_cache/
-.ruff_cache/
-.venv/
-tmp/
-output/
-reports/
-training_cache/
-data/train/
-data/validation/
-submissions/
-*.zip
-*.zip.sha256
+**/*.pyc
+**/*.pyo
+**/*.so

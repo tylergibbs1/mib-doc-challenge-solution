@@ -1,107 +1,54 @@
-# MIB Visible-Evidence Pipeline
+# Reproducible solution
 
-This repository contains a reproducible, offline CPU pipeline for the 8090 MIB
-document challenge. It combines visible-raster OCR, evidence-aware field
-resolution, deterministic safety rules, and small task-specific classifiers.
-No LLM, VLM, cloud OCR, API key, or runtime network access is used.
+## Selection discipline
 
-## Architecture
+The previous submitted system was frozen before this resubmission. Candidate
+changes were evaluated with a public-training-only 700/150/150 author split,
+group-disjoint out-of-fold folds, and two author-held-out partitions.
 
-1. **Visible evidence boundary.** PyMuPDF native spans are accepted only when
-   they intersect the crop box and have sufficient contrast. White/off-page
-   prompt injections are discarded.
-2. **Raster OCR.** Every page is rendered at 220 DPI and read by Tesseract.
-   Low-quality pages get contrast enhancement and form-line removal. A Poppler
-   render is used as an independent fallback because the two rasterizers have
-   complementary failure modes on damaged scans. Tesseract TSV is parsed with
-   bounded tab splitting so recognized quote glyphs cannot absorb coordinate
-   rows into the evidence text.
-3. **Evidence resolution.** Closed-vocabulary fields use fuzzy OCR matching;
-   names, dates, and sponsor IDs use context-specific parsers. Candidate values
-   follow the manual's document precedence, including explicit correction
-   notes. Cross-document conflicts become risk evidence unless a trusted final
-   finding explicitly supersedes an inferred, non-explicit conflict.
-   Outcome-determinative risk flags are never imputed when their visible
-   evidence is absent.
-4. **Hybrid prediction.** Word and character TF-IDF features handle policy
-   phrases, damaged words, and layout variants, while an Extra Trees model
-   handles the extracted structured record. A held-out blend is wrapped in
-   deterministic guardrails for manual findings, disqualifying flags, revoked
-   sponsors, transit cases, and unpaid fees. Packet identifiers are removed
-   before vectorization.
-5. **Calibrated uncertainty.** A second-stage logistic model predicts whether
-   the chosen adjudication is correct using out-of-fold class probabilities,
-   model margin and disagreement, OCR quality, missing fields, document mix,
-   predicted class, and guardrail source.
-6. **Policy/output consistency.** Risk flags and missing policy evidence are
-   never imputed as approval evidence. Fold-validated field classifiers and
-   categorical priors may fill required output fields, including a neutral
-   in-window date for schema-only missingness. A one-way postcondition then
-   checks the emitted values and may demote an approval to review or denial
-   before confidence calibration. Output estimates therefore cannot leave an
-   unsafe approval that contradicts the serialized row.
+A four-system research ensemble scored about 140.9 locally but was rejected:
+running all of its OCR systems could not satisfy the official average runtime
+limit. Two attempted one-pass distillations were also rejected because both
+lost score on untouched author holdouts. This repository therefore publishes
+the strongest reproducible one-pass candidate rather than cached or
+unreproducible ensemble outputs.
 
-## Research grounding
+On the two untouched 150-case author partitions, the imported candidate scored
+131.19 and 137.43. Pooled, it scored about 134.31 compared with about 125.56
+for the frozen previous submission, a local improvement of roughly 8.75
+points. The paired document bootstrap for that comparison had a positive lower
+bound. These are local public-training estimates, not private leaderboard
+claims.
 
-The bounded multi-render OCR design is a resource-constrained application of
-the diversity and voting results reported by Reul et al. in
-[Improving OCR Accuracy on Early Printed Books](https://arxiv.org/abs/1802.10038)
-and Wick et al. in
-[Calamari](https://arxiv.org/abs/1807.02004). Instead of loading a committee of
-neural OCR models, the pipeline creates diverse observations with two
-rasterizers and targeted image preprocessing, then selects the observation
-with the strongest document-specific anchors.
+## Runtime architecture
 
-Its selective retry policy also follows the quality-aware routing pattern in
-[Benchmarking OCR Pipelines with Adaptive Enhancement](https://arxiv.org/abs/2604.25176):
-easy pages stay on the fast path, while low-confidence pages receive bounded
-enhancement and independent-render retries. This implementation deliberately
-uses classical image operations instead of the paper's CNN so it remains
-offline, small, and CPU-efficient.
+1. Inspect PDF spans for visibility before rasterization. Hidden and off-crop
+   instructions are never treated as evidence.
+2. Run bounded low-resolution OCR, with higher-resolution recovery only when
+   deny-relevant evidence is missing.
+3. Parse closed vocabularies and structured identifiers, preserving
+   cross-page authority and cancellation evidence.
+4. Apply deterministic field-manual policy and one-way terminal guards.
+5. Resolve only a narrowly defined insufficient-evidence review subset with a
+   frozen, dependency-free tree ensemble.
+6. Emit calibrated confidence and an atomic output file.
 
-The confidence layer follows the post-hoc calibration discipline described by
-Guo et al. in
-[On Calibration of Modern Neural Networks](https://arxiv.org/abs/1706.04599).
-It also adopts the explicit prediction-correctness target studied by Liu et al.
-in
-[Optimizing Calibration by Gaining Aware of Prediction Correctness](https://arxiv.org/abs/2404.13016).
-Its inputs and target are generated strictly out of fold, so the submitted
-confidence estimates model correctness rather than in-sample class
-probability.
+The image contains no LLM or VLM and requires no runtime network. Model
+artifacts are below the per-model and aggregate limits. The upstream retained
+image measured 4.761 seconds per PDF over all 5,000 validation documents with
+four CPUs, and this resubmission keeps that runtime closure unchanged.
 
-## Reproduce training
+## Compliance boundaries
 
-The public dataset must be unpacked under `data/`.
+- Training labels influence only public-training-derived parsers, resolver,
+  and calibration artifacts.
+- Case identifiers and open applicant/sponsor identities are excluded from the
+  learned review resolver.
+- The filename supplies the output case ID; no prediction lookup table exists.
+- The validation PDFs are unlabeled and are used only as runtime input.
+- No validation prediction file from another participant is present in the
+  Docker context or copied into the submission.
+- `.dockerignore` allowlists only the runtime source and model artifacts.
 
-```bash
-python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python -m solution.train --workers 4
-```
-
-The OCR cache in `training_cache/` is resumable and intentionally ignored by
-Git. The fitted artifact is `models/model.joblib`.
-
-## Run locally
-
-```bash
-.venv/bin/python -m solution.predict data/train /tmp/mib-predictions.jsonl
-python3 scripts/validate_submission.py \
-  --submission /tmp/mib-predictions.jsonl \
-  --manifest data/train_labels.csv \
-  --require-complete
-```
-
-## Exact offline contract
-
-```bash
-docker build -t mib-submission .
-docker run --rm --network none \
-  --mount type=bind,src="$PWD/data/train",dst=/input,readonly \
-  --mount type=bind,src=/tmp/mib-output,dst=/output \
-  mib-submission /input /output/predictions.jsonl
-```
-
-The entrypoint writes incrementally, uses at most four worker processes, writes
-temporary raster fallbacks only below `/tmp`, and requires a read-only
-container root.
+The original upstream technical memo and model-provenance notes are retained
+under `docs/upstream-callingmoonshots/` for reviewer audit.

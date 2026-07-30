@@ -1,0 +1,163 @@
+{
+ "APPROVED|adjudicator_note": {
+  "acc": 1.0,
+  "decision": "APPROVED",
+  "n": 52,
+  "override": true,
+  "reason": "adjudicator_note"
+ },
+ "APPROVED|clean": {
+  "acc": 0.96,
+  "decision": "APPROVED",
+  "n": 50,
+  "override": true,
+  "reason": "clean"
+ },
+ "DENIED|adjudicator_note": {
+  "acc": 1.0,
+  "decision": "DENIED",
+  "n": 114,
+  "override": true,
+  "reason": "adjudicator_note"
+ },
+ "DENIED|disqualifying_flag": {
+  "acc": 1.0,
+  "decision": "DENIED",
+  "n": 65,
+  "override": true,
+  "reason": "disqualifying_flag"
+ },
+ "DENIED|embargoed_world": {
+  "acc": 0.9048,
+  "decision": "DENIED",
+  "n": 21,
+  "override": false,
+  "reason": "embargoed_world"
+ },
+ "DENIED|insufficient_evidence": {
+  "acc": 1.0,
+  "decision": "DENIED",
+  "n": 1,
+  "override": false,
+  "reason": "insufficient_evidence"
+ },
+ "DENIED|recovered_adjudicator_note": {
+  "acc": 1.0,
+  "decision": "DENIED",
+  "n": 4,
+  "override": true,
+  "reason": "recovered_adjudicator_note"
+ },
+ "DENIED|revoked_sponsor": {
+  "acc": 0.9565,
+  "decision": "DENIED",
+  "n": 46,
+  "override": true,
+  "reason": "revoked_sponsor"
+ },
+ "DENIED|stale_application": {
+  "acc": 0.8889,
+  "decision": "DENIED",
+  "n": 18,
+  "override": false,
+  "reason": "stale_application"
+ },
+ "DENIED|transit_visa": {
+  "acc": 0.963,
+  "decision": "DENIED",
+  "n": 27,
+  "override": true,
+  "reason": "transit_visa"
+ },
+ "DENIED|unpaid_fee": {
+  "acc": 1.0,
+  "decision": "DENIED",
+  "n": 20,
+  "override": true,
+  "reason": "unpaid_fee"
+ },
+ "NEEDS_REVIEW|adjudicator_note": {
+  "acc": 1.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 85,
+  "override": true,
+  "reason": "adjudicator_note"
+ },
+ "NEEDS_REVIEW|fee_unknown": {
+  "acc": 1.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 22,
+  "override": true,
+  "reason": "fee_unknown"
+ },
+ "NEEDS_REVIEW|hidden_only_field": {
+  "acc": 0.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 4,
+  "override": true,
+  "reason": "hidden_only_field"
+ },
+ "NEEDS_REVIEW|implausible_future_arrival": {
+  "acc": 0.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 5,
+  "override": true,
+  "reason": "implausible_future_arrival"
+ },
+ "NEEDS_REVIEW|insufficient_evidence": {
+  "acc": 0.2772,
+  "decision": "NEEDS_REVIEW",
+  "n": 202,
+  "override": false,
+  "reason": "insufficient_evidence"
+ },
+ "NEEDS_REVIEW|missing_arrival_date": {
+  "acc": 0.7273,
+  "decision": "NEEDS_REVIEW",
+  "n": 11,
+  "override": false,
+  "reason": "missing_arrival_date"
+ },
+ "NEEDS_REVIEW|recovered_adjudicator_note": {
+  "acc": 1.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 1,
+  "override": false,
+  "reason": "recovered_adjudicator_note"
+ },
+ "NEEDS_REVIEW|registry_embargo_status": {
+  "acc": 0.5,
+  "decision": "NEEDS_REVIEW",
+  "n": 2,
+  "override": false,
+  "reason": "registry_embargo_status"
+ },
+ "NEEDS_REVIEW|review_flag": {
+  "acc": 0.9535,
+  "decision": "NEEDS_REVIEW",
+  "n": 43,
+  "override": true,
+  "reason": "review_flag"
+ },
+ "NEEDS_REVIEW|sponsor_blank": {
+  "acc": 0.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 1,
+  "override": false,
+  "reason": "sponsor_blank"
+ },
+ "NEEDS_REVIEW|stale_gray_zone": {
+  "acc": 0.0,
+  "decision": "NEEDS_REVIEW",
+  "n": 1,
+  "override": false,
+  "reason": "stale_gray_zone"
+ },
+ "NEEDS_REVIEW|waived_without_visible_waiver": {
+  "acc": 0.5,
+  "decision": "NEEDS_REVIEW",
+  "n": 4,
+  "override": false,
+  "reason": "waived_without_visible_waiver"
+ }
+}
